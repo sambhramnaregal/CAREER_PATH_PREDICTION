@@ -61,9 +61,9 @@ def predict_batch():
         # Add predictions to dataframe
         df['Predicted_Career_Path'] = predictions
         
-        # Add probability columns
+        # Add probability columns (convert to percentage)
         for idx, class_name in enumerate(career_model.classes_):
-            df[f'Probability_{class_name}'] = probabilities[:, idx]
+            df[f'Probability_{class_name}'] = (probabilities[:, idx] * 100).round(2).astype(str) + '%'
         
         # Save to BytesIO
         output = BytesIO()
