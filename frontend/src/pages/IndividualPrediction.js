@@ -116,7 +116,7 @@ const IndividualPrediction = () => {
         transition={{ duration: 0.5 }}
       >
         <h1 className="text-4xl font-bold mb-2 gradient-text">AI Career Path Predictor</h1>
-        <p className="text-gray-600 mb-8">Get your personalized career profile and roadmap powered by Gemini AI</p>
+        <p className="text-gray-600 mb-8">Get your personalized career profile and roadmap powered by Career Path AI</p>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Form Section */}
@@ -529,8 +529,8 @@ const IndividualPrediction = () => {
                     {chatHistory.map((msg, idx) => (
                       <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                         <div className={`max-w-[80%] p-3 rounded-lg ${msg.role === 'user'
-                            ? 'bg-indigo-600 text-white rounded-br-none'
-                            : 'bg-gray-100 text-gray-800 rounded-bl-none'
+                          ? 'bg-indigo-600 text-white rounded-br-none'
+                          : 'bg-gray-100 text-gray-800 rounded-bl-none'
                           }`}>
                           <p className="text-sm">{msg.content}</p>
                         </div>

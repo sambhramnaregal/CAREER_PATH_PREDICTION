@@ -201,7 +201,7 @@ def generate_roadmap(data, profile_name, roles):
     """Generate personalized roadmap using Gemini"""
     try:
         # Reverted to gemini-pro
-        model = genai.GenerativeModel('gemini-pro')
+        model = genai.GenerativeModel('gemini-1.5-flash')
         prompt = f"""
         Create a personalized career roadmap for a Computer Science student.
         
@@ -235,7 +235,7 @@ def chat():
         if not message:
             return jsonify({'error': 'Message is required'}), 400
 
-        model = genai.GenerativeModel('gemini-pro')
+        model = genai.GenerativeModel('gemini-1.5-flash')
         
         # Construct a system prompt with context
         system_prompt = f"""
