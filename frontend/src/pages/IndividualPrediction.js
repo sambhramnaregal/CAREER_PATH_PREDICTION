@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import axios from 'axios';
-import { FaUser, FaSpinner, FaChartBar } from 'react-icons/fa';
+import { FaUser, FaSpinner, FaChartBar, FaDownload, FaRobot, FaComments } from 'react-icons/fa';
 import { motion } from 'framer-motion';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 
 const API_URL = 'http://localhost:5000';
 
@@ -32,6 +31,11 @@ const IndividualPrediction = () => {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Chatbot State
+  const [chatInput, setChatInput] = useState('');
+  const [chatHistory, setChatHistory] = useState([]);
+  const [chatLoading, setChatLoading] = useState(false);
 
   const branches = [
     'CSE', 'ISE', 'AIML', 'CSDS', 'CSD', 'CSBS', 'CSCY', 'CS IOT',
@@ -64,20 +68,44 @@ const IndividualPrediction = () => {
     }
   };
 
-  const COLORS = ['#0ea5e9', '#10b981', '#f59e0b'];
+  const handleDownloadRoadmap = () => {
+    if (!result || !result.roadmap) return;
 
-  const getPathColor = (path) => {
-    if (path === 'Higher Studies') return 'from-blue-500 to-cyan-600';
-    if (path === 'Placement') return 'from-green-500 to-emerald-600';
-    if (path === 'Startup') return 'from-orange-500 to-red-600';
-    return 'from-gray-500 to-gray-600';
+    const element = document.createElement("a");
+    const file = new Blob([result.roadmap], { type: 'text/markdown' });
+    element.href = URL.createObjectURL(file);
+    element.download = `${formData.name}_Career_Roadmap.md`;
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
   };
 
-  const getPathIcon = (path) => {
-    if (path === 'Higher Studies') return '🎓';
-    if (path === 'Placement') return '💼';
-    if (path === 'Startup') return '🚀';
-    return '📊';
+  const handleChatSubmit = async (e) => {
+    e.preventDefault();
+    if (!chatInput.trim()) return;
+
+    const userMessage = chatInput;
+    setChatInput('');
+    setChatHistory(prev => [...prev, { role: 'user', content: userMessage }]);
+    setChatLoading(true);
+
+    try {
+      const response = await axios.post(`${API_URL}/chat`, {
+        message: userMessage,
+        history: chatHistory,
+        context: {
+          profile_name: result.profile_name,
+          roles: result.suggested_roles.join(', '),
+          technical_score: formData.technical_skills
+        }
+      });
+
+      setChatHistory(prev => [...prev, { role: 'ai', content: response.data.response }]);
+    } catch (err) {
+      setChatHistory(prev => [...prev, { role: 'ai', content: "Sorry, I encountered an error. Please try again." }]);
+    } finally {
+      setChatLoading(false);
+    }
   };
 
   return (
@@ -87,8 +115,8 @@ const IndividualPrediction = () => {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
       >
-        <h1 className="text-4xl font-bold mb-2 gradient-text">Individual Career Path Prediction</h1>
-        <p className="text-gray-600 mb-8">Enter your details to get personalized career path recommendation</p>
+        <h1 className="text-4xl font-bold mb-2 gradient-text">AI Career Path Predictor</h1>
+        <p className="text-gray-600 mb-8">Get your personalized career profile and roadmap powered by Gemini AI</p>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Form Section */}
@@ -423,12 +451,12 @@ const IndividualPrediction = () => {
                 {loading ? (
                   <span className="flex items-center justify-center">
                     <FaSpinner className="animate-spin mr-2" />
-                    Predicting...
+                    Analyzing Profile...
                   </span>
                 ) : (
                   <span className="flex items-center justify-center">
                     <FaChartBar className="mr-2" />
-                    Get Career Prediction
+                    Generate Career Roadmap
                   </span>
                 )}
               </button>
@@ -445,121 +473,102 @@ const IndividualPrediction = () => {
                 className="space-y-6"
               >
                 {/* Main Prediction */}
-                <div className={`glass-card p-8 text-center bg-gradient-to-br ${getPathColor(result.prediction)}`}>
-                  <div className="text-7xl mb-4">{getPathIcon(result.prediction)}</div>
-                  <h3 className="text-white text-2xl font-semibold mb-2">Predicted Career Path</h3>
-                  <div className="text-5xl font-bold text-white mb-3">
-                    {result.prediction}
+                <div className="glass-card p-8 text-center bg-gradient-to-br from-indigo-600 to-purple-700">
+                  <div className="text-7xl mb-4">🚀</div>
+                  <h3 className="text-white text-2xl font-semibold mb-2">Your Career Profile</h3>
+                  <div className="text-4xl font-bold text-white mb-3">
+                    {result.profile_name}
                   </div>
-                  <div className="text-white text-lg">
-                    Confidence: {(result.confidence * 100).toFixed(1)}%
-                  </div>
+                  <p className="text-indigo-100 text-lg italic">
+                    "{result.description}"
+                  </p>
                 </div>
 
-                {/* Probabilities */}
+                {/* Suggested Roles */}
                 <div className="glass-card p-6">
-                  <h3 className="text-xl font-bold mb-4 text-gray-800">📊 Career Path Probabilities</h3>
-                  <div className="space-y-3">
-                    {Object.entries(result.probabilities).map(([path, prob]) => (
-                      <div key={path}>
-                        <div className="flex justify-between mb-1">
-                          <span className="font-medium text-gray-700 flex items-center">
-                            <span className="mr-2">{getPathIcon(path)}</span>
-                            {path}
-                          </span>
-                          <span className="font-bold text-gray-800">
-                            {(prob * 100).toFixed(1)}%
-                          </span>
-                        </div>
-                        <div className="w-full bg-gray-200 rounded-full h-3">
-                          <div
-                            className={`h-3 rounded-full bg-gradient-to-r ${getPathColor(path)} transition-all duration-500`}
-                            style={{ width: `${prob * 100}%` }}
-                          ></div>
-                        </div>
-                      </div>
+                  <h3 className="text-xl font-bold mb-4 text-gray-800">🎯 Suggested Roles</h3>
+                  <div className="flex flex-wrap gap-2">
+                    {result.suggested_roles && result.suggested_roles.map((role, index) => (
+                      <span key={index} className="px-4 py-2 bg-indigo-100 text-indigo-800 rounded-full font-medium">
+                        {role}
+                      </span>
                     ))}
                   </div>
                 </div>
 
-                {/* Pie Chart */}
+                {/* Roadmap */}
                 <div className="glass-card p-6">
-                  <h3 className="text-xl font-bold mb-4 text-gray-800 text-center">Distribution</h3>
-                  <ResponsiveContainer width="100%" height={280}>
-                    <PieChart>
-                      <Pie
-                        data={Object.entries(result.probabilities).map(([name, value]) => ({
-                          name,
-                          value: value * 100
-                        }))}
-                        cx="50%"
-                        cy="50%"
-                        labelLine={false}
-                        label={(entry) => `${entry.name}: ${entry.value.toFixed(1)}%`}
-                        outerRadius={90}
-                        fill="#8884d8"
-                        dataKey="value"
-                      >
-                        {COLORS.map((color, index) => (
-                          <Cell key={`cell-${index}`} fill={color} />
-                        ))}
-                      </Pie>
-                      <Tooltip formatter={(value) => `${value.toFixed(1)}%`} />
-                      <Legend />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-
-                {/* Feature Importance */}
-                {result.feature_importance && (
-                  <div className="glass-card p-6">
-                    <h3 className="text-xl font-bold mb-4 text-gray-800">🎯 Top Influential Factors</h3>
-                    <ResponsiveContainer width="100%" height={300}>
-                      <BarChart data={result.feature_importance.slice(0, 5)} layout="vertical">
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis type="number" />
-                        <YAxis dataKey="feature" type="category" width={120} />
-                        <Tooltip />
-                        <Legend />
-                        <Bar dataKey="importance" fill="#0ea5e9" name="Importance" />
-                      </BarChart>
-                    </ResponsiveContainer>
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-xl font-bold text-gray-800 flex items-center">
+                      <FaRobot className="mr-2 text-indigo-600" />
+                      AI Generated Roadmap
+                    </h3>
+                    <button
+                      onClick={handleDownloadRoadmap}
+                      className="flex items-center text-sm bg-green-600 text-white px-3 py-1.5 rounded hover:bg-green-700 transition"
+                    >
+                      <FaDownload className="mr-1" /> Download
+                    </button>
                   </div>
-                )}
 
-                {/* Recommendations */}
-                <div className="glass-card p-6">
-                  <h3 className="text-xl font-bold mb-3 text-gray-800">💡 Recommendations</h3>
-                  {result.prediction === 'Higher Studies' && (
-                    <div className="space-y-2 text-gray-700">
-                      <p>✓ Focus on research publications and academic projects</p>
-                      <p>✓ Maintain high CGPA and develop analytical skills</p>
-                      <p>✓ Connect with professors and research mentors</p>
-                      <p>✓ Prepare for GRE/GATE examinations</p>
-                    </div>
-                  )}
-                  {result.prediction === 'Placement' && (
-                    <div className="space-y-2 text-gray-700">
-                      <p>✓ Strengthen technical and communication skills</p>
-                      <p>✓ Gain more internship experience</p>
-                      <p>✓ Build a strong portfolio of projects</p>
-                      <p>✓ Practice coding and aptitude tests</p>
-                    </div>
-                  )}
-                  {result.prediction === 'Startup' && (
-                    <div className="space-y-2 text-gray-700">
-                      <p>✓ Develop leadership and business skills</p>
-                      <p>✓ Network with entrepreneurs and mentors</p>
-                      <p>✓ Work on innovative projects and ideas</p>
-                      <p>✓ Learn about market analysis and business planning</p>
-                    </div>
-                  )}
+                  <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 max-h-[500px] overflow-y-auto">
+                    <pre className="whitespace-pre-wrap font-sans text-gray-700 text-sm leading-relaxed">
+                      {result.roadmap}
+                    </pre>
+                  </div>
                 </div>
+
+                {/* Chatbot Interface */}
+                <div className="glass-card p-6 bg-gradient-to-b from-white to-indigo-50">
+                  <h3 className="text-xl font-bold mb-4 text-gray-800 flex items-center">
+                    <FaComments className="mr-2 text-indigo-600" />
+                    Chat with Career AI
+                  </h3>
+
+                  <div className="bg-white border border-gray-200 rounded-lg h-[300px] overflow-y-auto p-4 mb-4 space-y-3">
+                    {chatHistory.map((msg, idx) => (
+                      <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                        <div className={`max-w-[80%] p-3 rounded-lg ${msg.role === 'user'
+                            ? 'bg-indigo-600 text-white rounded-br-none'
+                            : 'bg-gray-100 text-gray-800 rounded-bl-none'
+                          }`}>
+                          <p className="text-sm">{msg.content}</p>
+                        </div>
+                      </div>
+                    ))}
+                    {chatLoading && (
+                      <div className="flex justify-start">
+                        <div className="bg-gray-100 p-3 rounded-lg rounded-bl-none">
+                          <FaSpinner className="animate-spin text-indigo-600" />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <form onSubmit={handleChatSubmit} className="flex gap-2">
+                    <input
+                      type="text"
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      placeholder="Ask about your career path..."
+                      className="flex-1 input-field"
+                      disabled={chatLoading}
+                    />
+                    <button
+                      type="submit"
+                      disabled={!chatInput.trim() || chatLoading}
+                      className="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 disabled:bg-gray-400 transition"
+                    >
+                      Send
+                    </button>
+                  </form>
+                </div>
+
               </motion.div>
             ) : (
               <div className="glass-card p-12 text-center">
                 <FaUser className="text-6xl text-gray-300 mx-auto mb-4" />
-                <p className="text-gray-500 text-lg">Fill in the form and submit to get your career path prediction</p>
+                <p className="text-gray-500 text-lg">Fill in the form and submit to get your personalized career roadmap</p>
               </div>
             )}
           </div>
