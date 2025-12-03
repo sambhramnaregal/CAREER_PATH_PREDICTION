@@ -265,7 +265,7 @@ def predict_individual():
 
 def generate_roadmap(data, profile, roles):
     try:
-        model = genai.GenerativeModel('gemini-pro')
+        model = genai.GenerativeModel('models/gemma-3-1b-it')
         prompt = f"""
         Create a 6-month career roadmap for a student aiming for: {profile}
         Roles: {roles}
@@ -287,7 +287,7 @@ def chat():
         msg = data.get('message')
         context = data.get('context', {})
         
-        model = genai.GenerativeModel('gemini-pro')
+        model = genai.GenerativeModel('models/gemma-3-1b-it')
         prompt = f"""
         Context: Student Profile - {context.get('profile_name')}
         User: {msg}

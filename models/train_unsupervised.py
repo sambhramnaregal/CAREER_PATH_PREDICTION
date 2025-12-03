@@ -172,98 +172,128 @@ def cluster_embeddings(embeddings):
         sil_hdb = silhouette_score(embeddings, hdb_labels) if len(set(hdb_labels)) > 1 else -1
         print(f"   HDBSCAN Silhouette: {sil_hdb:.4f}")
     
-    # 2. KMeans (User requested both)
-    # We'll use KMeans for the final fixed assignment to avoid noise points (-1) if HDBSCAN is too noisy
-    # Or we can use HDBSCAN if it's good.
-    # Let's try to find optimal K for KMeans based on silhouette
-    print("   Running KMeans optimization...")
-    best_k = n_hdb if n_hdb > 2 else 5 # Start with HDBSCAN's hint or default
-    best_score = -1
-    best_kmeans = None
-    
-    for k in range(3, 15):
-        km = KMeans(n_clusters=k, random_state=42, n_init=10)
-        labels = km.fit_predict(embeddings)
-        score = silhouette_score(embeddings, labels)
-        if score > best_score:
-            best_score = score
-            best_k = k
-            best_kmeans = km
+    # 2. KMeans (User requested fixed 5 categories)
+    print("   Running KMeans with K=5...")
+    best_k = 5
+    best_kmeans = KMeans(n_clusters=best_k, random_state=42, n_init=10)
+    best_kmeans.fit(embeddings)
             
-    print(f"Best KMeans K={best_k} with Silhouette={best_score:.4f}")
-    
     return best_kmeans, best_k
 
-def name_clusters(kmeans, df, original_df_path):
-    print("Naming Clusters...")
-    # We need the original values to make sense of the profiles
-    # So we reload the df without scaling, or inverse transform.
-    # Easier to reload for simplicity and accuracy with categorical strings.
-    
-    df_orig = pd.read_excel(original_df_path)
-    df_orig.columns = [c.strip() for c in df_orig.columns]
-    
-    # Assign clusters
-    # We need to ensure X order matches. It should.
-    # But wait, we need the labels.
-    # We'll assume 'df' passed here is the one used for training X, so indices match.
-    
-    # Get labels from kmeans
-    # We need to re-predict or pass labels. Let's pass labels or model.
-    # We have the model. We need X (embeddings) to predict? 
-    # No, we can just use kmeans.labels_ if we just fitted it.
+def map_clusters_to_categories(kmeans, df_orig):
+    print("Mapping clusters to 5 fixed categories...")
     labels = kmeans.labels_
-    
     df_orig['Cluster'] = labels
     
-    cluster_info = {}
-    model = genai.GenerativeModel('gemini-pro')
-    
-    for c_id in sorted(list(set(labels))):
+    # Calculate centroids/means for mapping
+    cluster_stats = []
+    for c_id in range(5):
         cluster_data = df_orig[df_orig['Cluster'] == c_id]
+        stats = {
+            'id': c_id,
+            'cgpa': cluster_data['CGPA'].mean(),
+            'tech_score': cluster_data['Technical_Skills_Score'].mean(),
+            'projects': cluster_data['Number_of_Projects'].mean(),
+            'publications': cluster_data['Number_of_Publications'].mean(),
+            'leadership': cluster_data['Leadership_Roles'].apply(lambda x: 1 if x == 'Yes' else 0).mean(),
+            'entrepreneur': cluster_data['Entrepreneur_Cell_Member'].apply(lambda x: 1 if x == 'Yes' else 0).mean(),
+            'backlogs': cluster_data['Number_of_Backlogs'].mean()
+        }
+        cluster_stats.append(stats)
         
-        # Calculate summary stats
-        summary = {}
-        for col in NUMERICAL_COLS:
-            if col in cluster_data.columns:
-                summary[col] = round(cluster_data[col].mean(), 2)
+    # Define Categories
+    categories = [
+        "Tech-Oriented Dev Track",
+        "Research & Higher Studies",
+        "Corporate/Management Oriented",
+        "Entrepreneurial Track",
+        "Low-skill / Needs Intervention"
+    ]
+    
+    # Heuristic Mapping
+    # We will assign each cluster to the best fitting category
+    # This is a simple greedy assignment or scoring
+    
+    mapping = {} # cluster_id -> category_name
+    assigned_cats = set()
+    
+    # 1. Low-skill (Highest backlogs or lowest CGPA/Tech)
+    low_skill_cluster = max(cluster_stats, key=lambda x: x['backlogs'] - x['cgpa'] - x['tech_score'])
+    mapping[low_skill_cluster['id']] = "Low-skill / Needs Intervention"
+    assigned_cats.add("Low-skill / Needs Intervention")
+    
+    remaining_clusters = [c for c in cluster_stats if c['id'] not in mapping]
+    
+    # 2. Research (Highest Publications + CGPA)
+    if remaining_clusters:
+        research_cluster = max(remaining_clusters, key=lambda x: x['publications'] * 2 + x['cgpa'])
+        mapping[research_cluster['id']] = "Research & Higher Studies"
+        assigned_cats.add("Research & Higher Studies")
+        remaining_clusters = [c for c in remaining_clusters if c['id'] not in mapping]
         
-        # For categorical, get mode
-        for col in CATEGORICAL_COLS:
-            if col in cluster_data.columns:
-                try:
-                    summary[col] = cluster_data[col].mode()[0]
-                except:
-                    summary[col] = "N/A"
-                    
-        # Generate Prompt
-        prompt = f"""
-        Analyze this student profile group (Cluster {c_id}):
-        {json.dumps(summary, indent=2)}
+    # 3. Entrepreneur (Highest Entrepreneurship + Leadership)
+    if remaining_clusters:
+        ent_cluster = max(remaining_clusters, key=lambda x: x['entrepreneur'] * 3 + x['leadership'])
+        mapping[ent_cluster['id']] = "Entrepreneurial Track"
+        assigned_cats.add("Entrepreneurial Track")
+        remaining_clusters = [c for c in remaining_clusters if c['id'] not in mapping]
         
-        Suggest:
-        1. A specific Career Track Name (e.g. "AI Research Scientist", "Corporate Analyst").
-        2. 3-4 suitable Job Roles.
-        3. A 1-sentence description.
+    # 4. Tech (Highest Tech Score + Projects)
+    if remaining_clusters:
+        tech_cluster = max(remaining_clusters, key=lambda x: x['tech_score'] * 2 + x['projects'])
+        mapping[tech_cluster['id']] = "Tech-Oriented Dev Track"
+        assigned_cats.add("Tech-Oriented Dev Track")
+        remaining_clusters = [c for c in remaining_clusters if c['id'] not in mapping]
         
-        Return JSON: {{ "name": "...", "roles": [...], "description": "..." }}
-        """
+    # 5. Corporate (Remaining, usually balanced or high leadership)
+    if remaining_clusters:
+        corp_cluster = remaining_clusters[0]
+        mapping[corp_cluster['id']] = "Corporate/Management Oriented"
+        assigned_cats.add("Corporate/Management Oriented")
         
-        try:
-            res = model.generate_content(prompt)
-            text = res.text.replace('```json', '').replace('```', '').strip()
-            info = json.loads(text)
-            cluster_info[c_id] = info
-            print(f"   Cluster {c_id}: {info['name']}")
-        except Exception as e:
-            print(f"   Error naming cluster {c_id}: {e}")
-            cluster_info[c_id] = {
-                "name": f"Career Track {c_id}",
-                "roles": ["Generalist"],
-                "description": "Profile analysis failed."
-            }
-            
+    # Create Cluster Info
+    cluster_info = {}
+    
+    # Predefined roles and descriptions
+    category_details = {
+        "Tech-Oriented Dev Track": {
+            "roles": ["Software Engineer", "Full Stack Developer", "DevOps Engineer", "System Architect"],
+            "description": "Strong technical skills and project experience, suitable for core development roles."
+        },
+        "Research & Higher Studies": {
+            "roles": ["Data Scientist", "Research Associate", "PhD Candidate", "R&D Engineer"],
+            "description": "High academic performance and research interest, ideal for higher education or R&D."
+        },
+        "Corporate/Management Oriented": {
+            "roles": ["Product Manager", "Business Analyst", "Consultant", "Project Manager"],
+            "description": "Balanced profile with leadership qualities, suitable for management and corporate roles."
+        },
+        "Entrepreneurial Track": {
+            "roles": ["Startup Founder", "Product Owner", "Innovation Manager", "Business Development"],
+            "description": "High initiative and entrepreneurial spirit, suited for starting or leading new ventures."
+        },
+        "Low-skill / Needs Intervention": {
+            "roles": ["Junior Developer", "IT Support", "QA Tester", "Intern"],
+            "description": "Needs to focus on skill development and clearing backlogs to improve career prospects."
+        }
+    }
+    
+    for c_id, cat_name in mapping.items():
+        details = category_details[cat_name]
+        cluster_info[c_id] = {
+            "name": cat_name,
+            "roles": details["roles"],
+            "description": details["description"]
+        }
+        print(f"   Cluster {c_id} -> {cat_name}")
+        
     return cluster_info
+
+def name_clusters(kmeans, df, original_df_path):
+    # Wrapper to maintain signature but use new logic
+    df_orig = pd.read_excel(original_df_path)
+    df_orig.columns = [c.strip() for c in df_orig.columns]
+    return map_clusters_to_categories(kmeans, df_orig)
 
 def main():
     configure_gemini()
