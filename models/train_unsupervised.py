@@ -3,217 +3,315 @@ import numpy as np
 import pickle
 import os
 import google.generativeai as genai
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.cluster import KMeans
-from sklearn.mixture import GaussianMixture
 from sklearn.metrics import silhouette_score
 import json
 from dotenv import load_dotenv
+import torch
+from pytorch_tabnet.pretraining import TabNetPretrainer
+import hdbscan
+import warnings
 
-load_dotenv() # Load environment variables from .env file
+warnings.filterwarnings("ignore")
+load_dotenv()
 
 # --- Configuration ---
-# GAP FOR INPUT FILE PATH
-DATA_PATH = r"C:\Users\sambh\Downloads\student_career_path_synthetic.csv" 
+DATA_PATH = r"C:\Users\sambh\Downloads\unseen_student_datan.xlsx"
 MODEL_DIR = os.path.dirname(os.path.abspath(__file__))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
+# Define columns based on user request (Mapped to Excel file)
+CATEGORICAL_COLS = [
+    'Gender', 'Branch_Department', 'Type_of_Internships', 
+    'Co_curricular_Activities', 'Leadership_Roles', 
+    'Entrepreneur_Cell_Member', 'Family_Business_Background'
+]
+
+NUMERICAL_COLS = [
+    'Age', 'CGPA', 'Number_of_Backlogs', 'Number_of_Internships', 
+    'Number_of_Publications', 'Number_of_Projects', 
+    'Number_of_Certification_Courses', 'Technical_Skills_Score', 
+    'Number_of_Hackathons', 'Soft_Skills_Score'
+]
+
 def configure_gemini():
     if not GEMINI_API_KEY:
-        print("⚠️ Warning: GEMINI_API_KEY not found in environment variables.")
-        print("   Cluster naming and roadmap generation will be skipped or use placeholders.")
+        print("Warning: GEMINI_API_KEY not found.")
         return False
     genai.configure(api_key=GEMINI_API_KEY)
     return True
 
 def load_and_preprocess_data(filepath):
-    print(f"📂 Loading data from: {filepath}")
-    df = pd.read_csv(filepath)
-    
-    # Feature Extraction (Same as original to maintain consistency)
-    # We need to convert raw data into numerical features for clustering
-    X = []
-    for _, row in df.iterrows():
-        # Calculate extracurricular score
-        extracurricular = 0
-        if row.get('Co_curricular_Activities') == 'Yes': extracurricular += 50
-        extracurricular += row.get('Number_of_Hackathons', 0) * 8
-        extracurricular += row.get('Number_of_Certification_Courses', 0) * 3
-        extracurricular = min(extracurricular, 100)
-        
-        # Calculate creativity score
-        creativity = 0
-        creativity += row.get('Number_of_Projects', 0) * 15
-        if row.get('Entrepreneur_Cell_Member') == 'Yes': creativity += 40
-        creativity += row.get('Number_of_Hackathons', 0) * 5
-        creativity = min(creativity, 100)
-        
-        # Calculate analytics score
-        analytics = (row.get('CGPA', 0) / 10) * 60
-        analytics += row.get('Number_of_Publications', 0) * 10
-        analytics += row.get('Technical_Skills_Score', 0) * 8
-        analytics = min(analytics, 100)
-        
-        # Business interest
-        business_interest = 100 if (row.get('Family_Business_Background') == 'Yes' or 
-                                      row.get('Entrepreneur_Cell_Member') == 'Yes') else 50
+    print(f"Loading data from: {filepath}")
+    try:
+        df = pd.read_excel(filepath)
+    except Exception as e:
+        print(f"Error loading Excel: {e}")
+        return None, None, None, None
 
-        features = [
-            row.get('CGPA', 0),                                    
-            row.get('Technical_Skills_Score', 0) * 20,             
-            row.get('Soft_Skills_Score', 0) * 20,                  
-            row.get('Number_of_Internships', 0),                   
-            row.get('Number_of_Projects', 0),                      
-            extracurricular,                                
-            100 if row.get('Leadership_Roles') == 'Yes' else 0, 
-            creativity,                                     
-            analytics,                                      
-            row.get('Number_of_Publications', 0) * 15,             
-            business_interest,                              
-            row.get('Technical_Skills_Score', 0) * 20              
-        ]
-        X.append(features)
+    # Normalize column names
+    df.columns = [c.strip() for c in df.columns]
     
-    return np.array(X), df
+    # Handle missing columns or map them if names slightly differ
+    # For now, assuming exact matches or close enough to be found manually if needed
+    # Let's print columns to be sure during run
+    print("Columns found:", df.columns.tolist())
 
-def train_unsupervised_models(X):
-    print("🔄 Scaling features...")
+    # Fill missing values
+    for col in NUMERICAL_COLS:
+        if col in df.columns:
+            df[col] = df[col].fillna(df[col].median())
+    
+    for col in CATEGORICAL_COLS:
+        if col in df.columns:
+            df[col] = df[col].fillna('Unknown')
+
+    # Encoders
+    label_encoders = {}
+    for col in CATEGORICAL_COLS:
+        if col in df.columns:
+            le = LabelEncoder()
+            df[col] = le.fit_transform(df[col].astype(str))
+            label_encoders[col] = le
+            
+    # Scaling
     scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    
-    # 1. K-Means Clustering
-    # We'll try a wider range of k values to find more specific/granular roles
-    print("🤖 Training K-Means...")
-    best_kmeans = None
-    best_score = -1
-    
-    # Expanded range to capture diverse roles (e.g., AI Engineer, Product Manager, etc.)
-    for k in range(5, 15): 
-        kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
-        labels = kmeans.fit_predict(X_scaled)
-        score = silhouette_score(X_scaled, labels)
-        print(f"   k={k}: Silhouette Score = {score:.4f}")
+    if all(c in df.columns for c in NUMERICAL_COLS):
+        df[NUMERICAL_COLS] = scaler.fit_transform(df[NUMERICAL_COLS])
+    else:
+        print("Missing some numerical columns!")
         
+    # Prepare X for TabNet
+    # TabNet expects all features. We'll combine cat and num.
+    # For Pretrainer, we usually pass raw features (but numerical scaled is good).
+    # Categorical features need to be passed as indices for embeddings if using supervised TabNet,
+    # but for Unsupervised Pretraining, it reconstructs the input.
+    
+    feature_cols = NUMERICAL_COLS + CATEGORICAL_COLS
+    X = df[feature_cols].values
+    
+    return X, df, label_encoders, scaler
+
+def train_tabnet(X):
+    print("Training TabNet Pretrainer...")
+    # TabNet Pretrainer
+    unsupervised_model = TabNetPretrainer(
+        optimizer_fn=torch.optim.Adam,
+        optimizer_params=dict(lr=2e-2),
+        mask_type='entmax' # "sparsemax"
+    )
+    
+    unsupervised_model.fit(
+        X_train=X,
+        eval_set=[X],
+        pretraining_ratio=0.8,
+        max_epochs=100, # Adjust based on time/performance
+        patience=10,
+        batch_size=256, 
+        virtual_batch_size=128,
+        num_workers=0,
+        drop_last=False
+    )
+    
+    return unsupervised_model
+
+def get_embeddings(model, X):
+    print("Extracting Embeddings...")
+    # Get latent embeddings from the model
+    # predict_latent returns (output, embedded_x) - we want the latent representation
+    # Actually for TabNetPretrainer, predict returns the reconstruction.
+    # We need to hook into the network to get embeddings or use the encoder.
+    # The `predict` method of Pretrainer returns the reconstructed output.
+    # To get embeddings, we can use `predict_latent` if available or access the network.
+    
+    try:
+        res = model.predict_latent(X)
+        print(f"predict_latent res type: {type(res)}")
+        if isinstance(res, tuple): 
+            print(f"len: {len(res)}")
+            # If tuple, assume embedding is the second element (standard) or last?
+            # TabNetPretrainer: (output, latent)
+            if len(res) >= 2:
+                return res[1]
+            elif len(res) == 1:
+                return res[0]
+        return res
+    except Exception as e:
+        print(f"predict_latent failed: {e}")
+        
+    # Fallback: Access network directly
+    try:
+        print("Trying direct network access...")
+        device = model.device
+        model.network.eval()
+        with torch.no_grad():
+            X_tensor = torch.from_numpy(X).float().to(device)
+            res = model.network(X_tensor)
+            
+            if isinstance(res, tuple):
+                if len(res) >= 2:
+                    return res[1].cpu().numpy()
+                return res[0].cpu().numpy()
+            return res.cpu().numpy()
+    except Exception as e:
+        print(f"Direct network access failed: {e}")
+        return None
+
+def cluster_embeddings(embeddings):
+    print("Clustering Embeddings...")
+    
+    # 1. HDBSCAN
+    print("   Running HDBSCAN...")
+    hdb = hdbscan.HDBSCAN(min_cluster_size=5, min_samples=2, metric='euclidean')
+    hdb_labels = hdb.fit_predict(embeddings)
+    n_hdb = len(set(hdb_labels)) - (1 if -1 in hdb_labels else 0)
+    print(f"   HDBSCAN found {n_hdb} clusters (excluding noise).")
+    
+    if n_hdb > 1:
+        sil_hdb = silhouette_score(embeddings, hdb_labels) if len(set(hdb_labels)) > 1 else -1
+        print(f"   HDBSCAN Silhouette: {sil_hdb:.4f}")
+    
+    # 2. KMeans (User requested both)
+    # We'll use KMeans for the final fixed assignment to avoid noise points (-1) if HDBSCAN is too noisy
+    # Or we can use HDBSCAN if it's good.
+    # Let's try to find optimal K for KMeans based on silhouette
+    print("   Running KMeans optimization...")
+    best_k = n_hdb if n_hdb > 2 else 5 # Start with HDBSCAN's hint or default
+    best_score = -1
+    best_kmeans = None
+    
+    for k in range(3, 15):
+        km = KMeans(n_clusters=k, random_state=42, n_init=10)
+        labels = km.fit_predict(embeddings)
+        score = silhouette_score(embeddings, labels)
         if score > best_score:
             best_score = score
-            best_kmeans = kmeans
+            best_k = k
+            best_kmeans = km
             
-    print(f"✅ Best K-Means k={best_kmeans.n_clusters}")
-
-    # 2. Gaussian Mixture Model (Validation)
-    print("🤖 Validating with GMM...")
-    gmm = GaussianMixture(n_components=best_kmeans.n_clusters, random_state=42)
-    gmm.fit(X_scaled)
-    gmm_aic = gmm.aic(X_scaled)
-    print(f"   GMM AIC: {gmm_aic:.2f}")
+    print(f"Best KMeans K={best_k} with Silhouette={best_score:.4f}")
     
-    return best_kmeans, scaler, X_scaled
+    return best_kmeans, best_k
 
-def generate_cluster_profiles(kmeans, scaler, X_scaled, feature_names):
-    print("📊 Generating Cluster Profiles...")
-    profiles = {}
-    centers = kmeans.cluster_centers_
+def name_clusters(kmeans, df, original_df_path):
+    print("Naming Clusters...")
+    # We need the original values to make sense of the profiles
+    # So we reload the df without scaling, or inverse transform.
+    # Easier to reload for simplicity and accuracy with categorical strings.
     
-    # Inverse transform to get original scale values for interpretation
-    centers_original = scaler.inverse_transform(centers)
+    df_orig = pd.read_excel(original_df_path)
+    df_orig.columns = [c.strip() for c in df_orig.columns]
     
-    for i in range(len(centers)):
-        profile = {name: val for name, val in zip(feature_names, centers_original[i])}
-        profiles[i] = profile
-        
-    return profiles
-
-def name_clusters_with_gemini(profiles):
-    print("✨ Naming clusters using Gemini...")
-    # Reverting to gemini-pro as per user request/availability
-    try:
-        model = genai.GenerativeModel('gemini-pro')
-    except:
-        print("⚠️ gemini-pro not found, trying default")
-        model = genai.GenerativeModel('gemini-pro')
+    # Assign clusters
+    # We need to ensure X order matches. It should.
+    # But wait, we need the labels.
+    # We'll assume 'df' passed here is the one used for training X, so indices match.
+    
+    # Get labels from kmeans
+    # We need to re-predict or pass labels. Let's pass labels or model.
+    # We have the model. We need X (embeddings) to predict? 
+    # No, we can just use kmeans.labels_ if we just fitted it.
+    labels = kmeans.labels_
+    
+    df_orig['Cluster'] = labels
     
     cluster_info = {}
+    model = genai.GenerativeModel('gemini-pro')
     
-    for cluster_id, profile in profiles.items():
+    for c_id in sorted(list(set(labels))):
+        cluster_data = df_orig[df_orig['Cluster'] == c_id]
+        
+        # Calculate summary stats
+        summary = {}
+        for col in NUMERICAL_COLS:
+            if col in cluster_data.columns:
+                summary[col] = round(cluster_data[col].mean(), 2)
+        
+        # For categorical, get mode
+        for col in CATEGORICAL_COLS:
+            if col in cluster_data.columns:
+                try:
+                    summary[col] = cluster_data[col].mode()[0]
+                except:
+                    summary[col] = "N/A"
+                    
+        # Generate Prompt
         prompt = f"""
-        Analyze the following average feature values for a group of computer science students:
-        {json.dumps(profile, indent=2)}
+        Analyze this student profile group (Cluster {c_id}):
+        {json.dumps(summary, indent=2)}
         
-        Based on these characteristics, suggest:
-        1. A HIGHLY SPECIFIC "Career Profile Name" (e.g., "AI Research Scientist", "Full Stack Developer", "Product Manager", "Data Analyst", "Cybersecurity Specialist"). Avoid generic names like "Student" or "Techie".
-        2. A list of 4-5 specific job roles or opportunities they are best suited for. Include niche roles if applicable.
-        3. A brief 1-sentence description of this persona.
+        Suggest:
+        1. A specific Career Track Name (e.g. "AI Research Scientist", "Corporate Analyst").
+        2. 3-4 suitable Job Roles.
+        3. A 1-sentence description.
         
-        Format the output as JSON with keys: "name", "roles" (list), "description".
+        Return JSON: {{ "name": "...", "roles": [...], "description": "..." }}
         """
         
         try:
-            response = model.generate_content(prompt)
-            # Clean up json string if needed
-            text = response.text.replace('```json', '').replace('```', '').strip()
+            res = model.generate_content(prompt)
+            text = res.text.replace('```json', '').replace('```', '').strip()
             info = json.loads(text)
-            cluster_info[cluster_id] = info
-            print(f"   Cluster {cluster_id}: {info['name']}")
+            cluster_info[c_id] = info
+            print(f"   Cluster {c_id}: {info['name']}")
         except Exception as e:
-            print(f"   ❌ Error naming cluster {cluster_id}: {e}")
-            # Improved Fallback - No more "Cluster X"
-            # We assign a generic but professional title based on the ID to ensure variety if API fails
-            fallback_roles = [
-                "Software Development Engineer", "Data Science Professional", 
-                "Network & Systems Engineer", "Product Management Associate",
-                "Research & Development Specialist"
-            ]
-            role_name = fallback_roles[cluster_id % len(fallback_roles)]
-            
-            cluster_info[cluster_id] = {
-                "name": role_name,
-                "roles": [role_name, "Technical Consultant", "Project Associate"], 
-                "description": "A professional profile with strong technical foundations."
+            print(f"   Error naming cluster {c_id}: {e}")
+            cluster_info[c_id] = {
+                "name": f"Career Track {c_id}",
+                "roles": ["Generalist"],
+                "description": "Profile analysis failed."
             }
             
     return cluster_info
 
 def main():
-    has_gemini = configure_gemini()
+    configure_gemini()
     
-    X, df = load_and_preprocess_data(DATA_PATH)
+    # 1. Load & Preprocess
+    X, df, encoders, scaler = load_and_preprocess_data(DATA_PATH)
+    if X is None: return
     
-    kmeans, scaler, X_scaled = train_unsupervised_models(X)
+    # 2. Train TabNet
+    tabnet = train_tabnet(X)
     
-    feature_names = [
-        'CGPA', 'Technical_Skills', 'Communication_Skills', 
-        'Internships', 'Projects', 'Extracurricular',
-        'Leadership', 'Creativity', 'Analytics', 
-        'Research_Interest', 'Business_Interest', 'Technical_Interest'
-    ]
+    # 3. Get Embeddings
+    embeddings = get_embeddings(tabnet, X)
+    if embeddings is None:
+        print("Failed to extract embeddings. Exiting.")
+        return
     
-    profiles = generate_cluster_profiles(kmeans, scaler, X_scaled, feature_names)
+    # 4. Cluster
+    kmeans, best_k = cluster_embeddings(embeddings)
     
-    cluster_info = {}
-    if has_gemini:
-        cluster_info = name_clusters_with_gemini(profiles)
-    else:
-        # Manual fallback if no API key
-        print("⚠️ Using default names (No API Key)")
-        for i in profiles:
-            cluster_info[i] = {
-                "name": f"Profile Type {i+1}", 
-                "roles": ["Software Engineer", "Data Analyst"], 
-                "description": "Auto-generated profile."
-            }
-            
-    # Save everything
-    print("💾 Saving models and cluster info...")
+    # 5. Name Clusters
+    cluster_info = name_clusters(kmeans, df, DATA_PATH)
+    
+    # 6. Save
+    print("Saving artifacts...")
+    
+    # Save TabNet
+    tabnet.save_model(os.path.join(MODEL_DIR, 'tabnet_model'))
+    
+    # Save KMeans
     with open(os.path.join(MODEL_DIR, 'kmeans_model.pkl'), 'wb') as f:
         pickle.dump(kmeans, f)
         
+    # Save Scaler & Encoders
     with open(os.path.join(MODEL_DIR, 'scaler.pkl'), 'wb') as f:
         pickle.dump(scaler, f)
         
+    with open(os.path.join(MODEL_DIR, 'label_encoders.pkl'), 'wb') as f:
+        pickle.dump(encoders, f)
+        
+    # Save Cluster Info
     with open(os.path.join(MODEL_DIR, 'cluster_info.pkl'), 'wb') as f:
         pickle.dump(cluster_info, f)
         
-    print("✅ Done! Models saved to models/ directory.")
+    # Save Embeddings (optional, for viz)
+    np.save(os.path.join(MODEL_DIR, 'embeddings.npy'), embeddings)
+    
+    print("Training Complete!")
 
 if __name__ == "__main__":
     main()
