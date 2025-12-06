@@ -30,7 +30,7 @@ const Home = () => {
 
   const stats = [
     { icon: <FaBrain />, value: 'ML Powered', label: 'Machine Learning Model' },
-    { icon: <FaChartLine />, value: '3 Paths', label: 'Career Predictions' },
+    { icon: <FaChartLine />, value: '5 Paths', label: 'Career Predictions' },
     { icon: <FaRocket />, value: 'Real-time', label: 'Instant Results' }
   ];
 
@@ -116,27 +116,43 @@ const Home = () => {
         className="glass-card p-8 mb-8"
       >
         <h2 className="text-3xl font-bold mb-6 gradient-text text-center">
-          Career Path Options
+          Career Path Profiles
         </h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-6 rounded-xl">
-            <h3 className="text-xl font-bold text-blue-800 mb-3">Higher Studies</h3>
-            <p className="text-gray-700">
-              Master's, PhD programs for students with strong research interests and academic excellence
-            </p>
-          </div>
-          <div className="bg-gradient-to-br from-green-50 to-green-100 p-6 rounded-xl">
-            <h3 className="text-xl font-bold text-green-800 mb-3">Placement</h3>
-            <p className="text-gray-700">
-              Corporate jobs for students with strong technical and communication skills
-            </p>
-          </div>
-          <div className="bg-gradient-to-br from-purple-50 to-purple-100 p-6 rounded-xl">
-            <h3 className="text-xl font-bold text-purple-800 mb-3">Startup</h3>
-            <p className="text-gray-700">
-              Entrepreneurship path for students with business acumen and leadership qualities
-            </p>
-          </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {[
+            {
+              title: "Technical Innovators",
+              desc: "Strong coding ability, technical inclination and analytical thinking.",
+              color: "bg-gradient-to-br from-blue-50 to-blue-100 text-blue-800"
+            },
+            {
+              title: "Research & Data Learners",
+              desc: "Good academic mindset, research interest and analytical thinking.",
+              color: "bg-gradient-to-br from-green-50 to-green-100 text-green-800"
+            },
+            {
+              title: "Career Growth Learners",
+              desc: "Growing skillset, quick learning mindset, consistent improvement focus.",
+              color: "bg-gradient-to-br from-purple-50 to-purple-100 text-purple-800"
+            },
+            {
+              title: "Technical Specialist",
+              desc: "Focuses on specialized technical infrastructure and security.",
+              color: "bg-gradient-to-br from-orange-50 to-orange-100 text-orange-800"
+            },
+            {
+              title: "Research Innovator",
+              desc: "Driven by innovation and deep technical research.",
+              color: "bg-gradient-to-br from-pink-50 to-pink-100 text-pink-800"
+            }
+          ].map((path, index) => (
+            <div key={index} className={`${path.color} p-6 rounded-xl hover:shadow-md transition-shadow`}>
+              <h3 className="text-xl font-bold mb-3">{path.title}</h3>
+              <p className="text-gray-700 text-sm">
+                {path.desc}
+              </p>
+            </div>
+          ))}
         </div>
       </motion.div>
     </div>

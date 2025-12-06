@@ -317,6 +317,72 @@ def predict_batch():
         return jsonify({'error': f"Batch processing failed: {str(e)}"}), 500
 
 
+@app.route('/calculate/api', methods=['POST'])
+def calculate_api():
+    try:
+        data = request.json
+        
+        # Extract inputs
+        cgpa = float(data.get('cgpa', 0))
+        paid_intern = int(data.get('paid_internships', 0))
+        unpaid_intern = int(data.get('unpaid_internships', 0))
+        research = int(data.get('research_papers', 0))
+        certs = int(data.get('certificates', 0))
+        
+        # Calculate Points
+        # 1. CGPA (Max 2.0) - Weight 20%
+        # Assumption: CGPA is scaled to 2.0. If CGPA is 10, points = 2.0
+        cgpa_points = min(2.0, (cgpa / 10.0) * 2.0)
+        
+        # 2. Internships (Max 4.0) - Weight 40%
+        # Paid = 2 pts, Unpaid = 1 pt
+        intern_raw = (paid_intern * 2.0) + (unpaid_intern * 1.0)
+        intern_points = min(4.0, intern_raw)
+        
+        # 3. Research (Max 2.0) - Weight 20%
+        # 0.5 pts each
+        research_points = min(2.0, research * 0.5)
+        
+        # 4. Certificates (Max 2.0) - Weight 20%
+        # 0.1 pts each
+        cert_points = min(2.0, certs * 0.1)
+        
+        # Total
+        total_score = round(cgpa_points + intern_points + research_points + cert_points, 2)
+        
+        # Determine Level
+        if total_score >= 9.0:
+            level = 'excellent'
+            feedback = "Outstanding profile! You have a competitive edge for top-tier roles and research positions."
+        elif total_score >= 7.0:
+            level = 'good'
+            feedback = "Strong profile. You are well-prepared, but a few more projects or publications could boost your standing."
+        elif total_score >= 5.0:
+            level = 'fair'
+            feedback = "Decent start. Focus on gaining more practical experience (internships) and improving academic performance."
+        else:
+            level = 'needs_improvement'
+            feedback = "Needs improvement. Prioritize improving your CGPA and actively seeking internships or skill certifications."
+
+        return jsonify({
+            'success': True,
+            'total_score': total_score,
+            'max_score': 10.0,
+            'level': level,
+            'feedback': feedback,
+            'breakdown': {
+                'cgpa_points': round(cgpa_points, 2),
+                'internship_points': round(intern_points, 2),
+                'research_points': round(research_points, 2),
+                'cert_points': round(cert_points, 2)
+            }
+        })
+
+    except Exception as e:
+        print(f"API Calc Error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 
 def generate_roadmap(data, profile, roles):
     try:
