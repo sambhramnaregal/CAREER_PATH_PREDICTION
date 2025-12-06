@@ -1,0 +1,30 @@
+Researcher Error: {"error":"An error occurred: X has 8 features, but KMeans is expecting 17 features as input."}
+
+Developer Error: {"error":"An error occurred: X has 8 features, but KMeans is expecting 17 features as input."}
+
+Entrepreneur Error: {"error":"An error occurred: X has 8 features, but KMeans is expecting 17 features as input."}
+
+Researcher Error: {"error":"An error occurred: X has 8 features, but KMeans is expecting 17 features as input."}
+
+Developer Error: {"error":"An error occurred: X has 8 features, but KMeans is expecting 17 features as input."}
+
+Entrepreneur Error: {"error":"An error occurred: X has 8 features, but KMeans is expecting 17 features as input."}
+
+Researcher Error: {"error":"An error occurred: X has 8 features, but KMeans is expecting 17 features as input."}
+
+Developer Error: {"error":"An error occurred: X has 8 features, but KMeans is expecting 17 features as input."}
+
+Entrepreneur Error: {"error":"An error occurred: X has 8 features, but KMeans is expecting 17 features as input."}
+
+Researcher Error: {"error":"An error occurred: Buffer dtype mismatch, expected 'const double' but got 'float'"}
+
+Developer Error: {"error":"An error occurred: Buffer dtype mismatch, expected 'const double' but got 'float'"}
+
+Entrepreneur Error: {"error":"An error occurred: Buffer dtype mismatch, expected 'const double' but got 'float'"}
+
+Researcher Error: {"error":"An error occurred: KMeans prediction failed: Buffer dtype mismatch, expected 'const double' but got 'float'. Input shape: (1, 17), dtype: float64"}
+
+Developer Error: {"error":"An error occurred: KMeans prediction failed: Buffer dtype mismatch, expected 'const double' but got 'float'. Input shape: (1, 17), dtype: float64"}
+
+Entrepreneur Error: {"error":"An error occurred: KMeans prediction failed: Buffer dtype mismatch, expected 'const double' but got 'float'. Input shape: (1, 17), dtype: float64"}
+

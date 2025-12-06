@@ -38,7 +38,12 @@ try:
     response = requests.post(url, files=files)
     print(f"Status Code: {response.status_code}")
     if response.status_code == 200:
-        print("Success! Response contains file.")
+        data = response.json()
+        if data.get('success'):
+            print("Success! JSON response matches new format.")
+            print("Distribution:", data.get('distribution'))
+        else:
+            print("Warning: Success flag missing or false", data)
     else:
         print("Response:", response.text)
 except Exception as e:

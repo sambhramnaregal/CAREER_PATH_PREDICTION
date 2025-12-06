@@ -2,8 +2,9 @@ import React, { useState } from 'react';
 import axios from 'axios';
 import { FaUser, FaSpinner, FaChartBar, FaDownload, FaRobot, FaComments } from 'react-icons/fa';
 import { motion } from 'framer-motion';
+import ReactMarkdown from 'react-markdown';
 
-const API_URL = 'http://localhost:5000';
+const API_URL = 'http://localhost:5001';
 
 const IndividualPrediction = () => {
   const [formData, setFormData] = useState({
@@ -532,7 +533,11 @@ const IndividualPrediction = () => {
                           ? 'bg-indigo-600 text-white rounded-br-none'
                           : 'bg-gray-100 text-gray-800 rounded-bl-none'
                           }`}>
-                          <p className="text-sm">{msg.content}</p>
+                          <div className="text-sm prose prose-sm max-w-none">
+                            <ReactMarkdown>
+                              {msg.content}
+                            </ReactMarkdown>
+                          </div>
                         </div>
                       </div>
                     ))}

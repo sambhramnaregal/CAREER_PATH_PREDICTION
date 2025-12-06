@@ -180,7 +180,7 @@ def cluster_embeddings(embeddings):
             
     return best_kmeans, best_k
 
-def map_clusters_to_categories(kmeans, df_orig):
+'''def map_clusters_to_categories(kmeans, df_orig):
     print("Mapping clusters to 5 fixed categories...")
     labels = kmeans.labels_
     df_orig['Cluster'] = labels
@@ -287,7 +287,59 @@ def map_clusters_to_categories(kmeans, df_orig):
         }
         print(f"   Cluster {c_id} -> {cat_name}")
         
+    return cluster_info'''
+
+def map_clusters_to_categories(kmeans, df_orig):
+    labels = kmeans.labels_
+    df_orig['Cluster'] = labels
+
+    # Mean per cluster
+    summary = df_orig.groupby('Cluster').agg({
+        'CGPA': 'mean',
+        'Technical_Skills_Score': 'mean',
+        'Number_of_Projects': 'mean',
+        'Number_of_Publications': 'mean',
+        'Leadership_Roles': lambda x: (x == 'Yes').mean(),
+        'Entrepreneur_Cell_Member': lambda x: (x == 'Yes').mean(),
+        'Number_of_Backlogs': 'mean'
+    })
+
+    cluster_info = {}
+
+    for cid in summary.index:
+        row = summary.loc[cid]
+
+        # Rules
+
+        # 1️⃣ Very weak academic or backlog → low skill
+        if row['CGPA'] < 7.0 or row['Number_of_Backlogs'] > 2:
+            category = "Low-skill / Needs Intervention"
+
+        # 2️⃣ Research-oriented profile
+        elif row['Number_of_Publications'] >= 1 and row['CGPA'] >= 8.5:
+            category = "Research & Higher Studies"
+
+        # 3️⃣ Entrepreneur focus
+        elif row['Entrepreneur_Cell_Member'] >= 0.40 or row['Leadership_Roles'] >= 0.40:
+            category = "Entrepreneurial Track"
+
+        # 4️⃣ Strong tech profile
+        elif row['Technical_Skills_Score'] >= 3.5 or row['Number_of_Projects'] >= 3:
+            category = "Tech-Oriented Dev Track"
+
+        # 5️⃣ Default cluster → corporate
+        else:
+            category = "Corporate/Management Oriented"
+
+        # Attach info
+        cluster_info[cid] = {
+            "name": category,
+            "roles": [],  # We'll fill next
+            "description": ""
+        }
+
     return cluster_info
+
 
 def name_clusters(kmeans, df, original_df_path):
     # Wrapper to maintain signature but use new logic

@@ -4,7 +4,7 @@ import { FaUpload, FaDownload, FaFileExcel, FaCheck, FaSpinner, FaExternalLinkAl
 import { motion } from 'framer-motion';
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
-const API_URL = 'http://localhost:5000';
+const API_URL = 'http://localhost:5001';
 
 const BatchPrediction = () => {
   const [file, setFile] = useState(null);
@@ -13,8 +13,8 @@ const BatchPrediction = () => {
   const [success, setSuccess] = useState(false);
   const [distribution, setDistribution] = useState(null);
 
-  // TODO: Replace this with your actual Google Form link
-  const GOOGLE_FORM_LINK = 'YOUR_GOOGLE_FORM_LINK_HERE';
+  // Updated Google Form link
+  const GOOGLE_FORM_LINK = 'https://forms.gle/waq4HvbME4HVH1Ew7';
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
@@ -205,8 +205,8 @@ const BatchPrediction = () => {
               type="submit"
               disabled={!file || loading}
               className={`w-full py-4 rounded-lg font-semibold text-white transition-all duration-200 ${!file || loading
-                  ? 'bg-gray-400 cursor-not-allowed'
-                  : 'bg-gradient-to-r from-primary-600 to-primary-700 hover:from-primary-700 hover:to-primary-800 shadow-lg hover:shadow-xl'
+                ? 'bg-gray-400 cursor-not-allowed'
+                : 'bg-gradient-to-r from-primary-600 to-primary-700 hover:from-primary-700 hover:to-primary-800 shadow-lg hover:shadow-xl'
                 }`}
             >
               {loading ? (

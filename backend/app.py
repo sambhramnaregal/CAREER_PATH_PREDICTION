@@ -10,10 +10,10 @@ import google.generativeai as genai
 import json
 from dotenv import load_dotenv
 import base64
-import torch
-from pytorch_tabnet.pretraining import TabNetPretrainer
 
-load_dotenv()
+# Load .env from parent directory
+dotenv_path = os.path.join(os.path.dirname(__file__), '..', '.env')
+load_dotenv(dotenv_path)
 
 app = Flask(__name__)
 CORS(app)
@@ -21,58 +21,72 @@ CORS(app)
 # --- Configuration ---
 MODEL_PATH = os.path.join(os.path.dirname(__file__), '..', 'models')
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "models/gemma-3-1b-it")
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
+
 # --- Constants (Must match training) ---
 CATEGORICAL_COLS = [
-    'Gender', 'Branch_Department', 'Type_of_Internships', 
-    'Co_curricular_Activities', 'Leadership_Roles', 
+    'Gender', 'Branch_Department', 'Type_of_Internships',
+    'Co_curricular_Activities', 'Leadership_Roles',
     'Entrepreneur_Cell_Member', 'Family_Business_Background'
 ]
 
 NUMERICAL_COLS = [
-    'Age', 'CGPA', 'Number_of_Backlogs', 'Number_of_Internships', 
-    'Number_of_Publications', 'Number_of_Projects', 
-    'Number_of_Certification_Courses', 'Technical_Skills_Score', 
+    'Age', 'CGPA', 'Number_of_Backlogs', 'Number_of_Internships',
+    'Number_of_Publications', 'Number_of_Projects',
+    'Number_of_Certification_Courses', 'Technical_Skills_Score',
     'Number_of_Hackathons', 'Soft_Skills_Score'
 ]
+
 
 # --- Load Models ---
 kmeans_model = None
 scaler = None
 label_encoders = None
-tabnet_model = None
+pca_model = None
 cluster_info = None
 
+
 def load_models():
-    global kmeans_model, scaler, label_encoders, tabnet_model, cluster_info
+    global kmeans_model, scaler, pca_model, cluster_info, label_encoders
     try:
-        print("Loading models...")
+        print("Loading updated models...")
+
         with open(os.path.join(MODEL_PATH, 'kmeans_model.pkl'), 'rb') as f:
             kmeans_model = pickle.load(f)
-            
+
         with open(os.path.join(MODEL_PATH, 'scaler.pkl'), 'rb') as f:
             scaler = pickle.load(f)
-            
-        with open(os.path.join(MODEL_PATH, 'label_encoders.pkl'), 'rb') as f:
-            label_encoders = pickle.load(f)
-            
+
+        with open(os.path.join(MODEL_PATH, 'pca.pkl'), 'rb') as f:
+            pca_model = pickle.load(f)
+
         with open(os.path.join(MODEL_PATH, 'cluster_info.pkl'), 'rb') as f:
             cluster_info = pickle.load(f)
-            
-        # Load TabNet
-        tabnet_model = TabNetPretrainer()
-        tabnet_model.load_model(os.path.join(MODEL_PATH, 'tabnet_model.zip'))
-        
-        print("Models loaded successfully.")
+
+        # label encoders were optional but now forced
+        label_path = os.path.join(MODEL_PATH, 'label_encoders.pkl')
+        if os.path.exists(label_path):
+            with open(label_path, 'rb') as f:
+                label_encoders = pickle.load(f)
+        else:
+            label_encoders = {}
+
+        print("Models loaded successfully!")
+
     except Exception as e:
         print(f"Error loading models: {e}")
+        cluster_info = {}
+
         with open('backend_error.log', 'a') as f:
             f.write(f"Model Load Error: {str(e)}\n")
 
+
 load_models()
+
 
 @app.route('/health', methods=['GET'])
 def health_check():
@@ -80,139 +94,96 @@ def health_check():
         'status': 'healthy',
         'models_loaded': {
             'kmeans': kmeans_model is not None,
-            'tabnet': tabnet_model is not None,
+            'pca': pca_model is not None,
             'scaler': scaler is not None
         }
     })
 
+
 def preprocess_features(df):
-    """Preprocess dataframe to match TabNet input"""
-    # 1. Normalize columns
+    """Preprocess dataframe to match PCA model input"""
+
     df.columns = [c.strip() for c in df.columns]
-    
-    # 2. Fill missing
+
+    # Ensure ALL required columns exist even for missing keys
     for col in NUMERICAL_COLS:
-        if col in df.columns:
-            df[col] = df[col].fillna(0) # Use 0 or median? 0 is safer for single rows
-            
-    for col in CATEGORICAL_COLS:
-        if col in df.columns:
-            df[col] = df[col].fillna('Unknown')
-            
-    # 3. Encode Categorical
-    for col in CATEGORICAL_COLS:
-        if col in df.columns and col in label_encoders:
-            le = label_encoders[col]
-            # Handle unseen labels
-            df[col] = df[col].astype(str).map(lambda s: s if s in le.classes_ else 'Unknown')
-            # If 'Unknown' not in classes, we might have an issue. 
-            # Ideally we should have 'Unknown' in training or use a robust encoder.
-            # For now, we'll try to transform, and if error, replace with 0 (assuming 0 is valid or first class)
-            try:
-                df[col] = le.transform(df[col])
-            except:
-                 # Fallback: assign to mode or 0
-                 df[col] = 0
-                 
-    # 4. Scale Numerical
-    if all(c in df.columns for c in NUMERICAL_COLS):
-        df[NUMERICAL_COLS] = scaler.transform(df[NUMERICAL_COLS])
-        
-    # 5. Combine
-    feature_cols = NUMERICAL_COLS + CATEGORICAL_COLS
-    
-    # Ensure all columns exist
-    for col in feature_cols:
         if col not in df.columns:
             df[col] = 0
-            
-    return df[feature_cols].values
+        df[col] = df[col].fillna(0)
 
-def get_embeddings(model, X):
-    """Robust embedding extraction matching training script"""
-    try:
-        res = model.predict_latent(X)
-        if isinstance(res, tuple): 
-            if len(res) >= 2: return res[1]
-            elif len(res) == 1: return res[0]
-        return res
-    except Exception as e:
-        print(f"predict_latent failed: {e}")
-        
-    try:
-        device = model.device
-        model.network.eval()
-        with torch.no_grad():
-            X_tensor = torch.from_numpy(X).float().to(device)
-            res = model.network(X_tensor)
-            if isinstance(res, tuple):
-                if len(res) >= 2: return res[1].cpu().numpy()
-                return res[0].cpu().numpy()
-            return res.cpu().numpy()
-    except Exception as e:
-        print(f"Direct network access failed: {e}")
-        return None
+    for col in CATEGORICAL_COLS:
+        if col not in df.columns:
+            df[col] = "Unknown"
+        df[col] = df[col].fillna("Unknown")
 
-@app.route('/predict/batch', methods=['POST'])
-def predict_batch():
+        # Apply encoders if available
+        if label_encoders and col in label_encoders:
+            le = label_encoders[col]
+            df[col] = df[col].astype(str).apply(
+                lambda x: x if x in le.classes_ else le.classes_[0]
+            )
+            df[col] = le.transform(df[col])
+        else:
+            df[col] = df[col].astype(str).astype("category").cat.codes
+
+    # 🔥 VERY IMPORTANT FIX:
+    # Convert df[NUMERICAL_COLS] to numeric before scaling
+    df[NUMERICAL_COLS] = df[NUMERICAL_COLS].apply(pd.to_numeric, errors='coerce').fillna(0)
+
+    # 🔥 Now scale safely (scaler expects 2D numeric array)
+    df[NUMERICAL_COLS] = scaler.transform(df[NUMERICAL_COLS].values)
+
+    # Construct final array
+    final_df = df[NUMERICAL_COLS + CATEGORICAL_COLS]
+
+    # Final sanity check
+    final_df = final_df.fillna(0)
+
+    return final_df
+
+
+def get_embeddings(X):
+    global pca_model
+
     try:
-        if 'file' not in request.files:
-            return jsonify({'error': 'No file uploaded'}), 400
+        if pca_model is None:
+            print("WARNING: PCA model missing — returning original X")
+            return X.astype(np.float64)
+
+        # Ensure input is 2D and float64
+        if X.ndim == 1:
+            X = X.reshape(1, -1)
         
-        file = request.files['file']
-        df = pd.read_excel(file)
-        
-        # Preprocess
-        X = preprocess_features(df.copy())
-        
-        # TabNet Embeddings
-        embeddings = get_embeddings(tabnet_model, X)
-        if embeddings is None:
-             return jsonify({'error': 'Failed to generate embeddings'}), 500
-        
-        # KMeans
-        clusters = kmeans_model.predict(embeddings)
-        
-        df['Cluster_ID'] = clusters
-        df['Predicted_Profile'] = [cluster_info.get(c, {}).get('name', f'Cluster {c}') for c in clusters]
-        df['Suggested_Roles'] = [", ".join(cluster_info.get(c, {}).get('roles', [])) for c in clusters]
-        
-        # Distribution
-        distribution = df['Predicted_Profile'].value_counts().to_dict()
-        
-        # Output
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False)
-        output.seek(0)
-        
-        file_base64 = base64.b64encode(output.getvalue()).decode('utf-8')
-        
-        return jsonify({
-            'success': True,
-            'filename': f'predictions_{datetime.now().strftime("%Y%m%d")}.xlsx',
-            'file_base64': file_base64,
-            'distribution': distribution
-        })
-        
+        # Enforce float64 for sklearn compatibility
+        X_float = X.astype(np.float64)
+
+        transformed = pca_model.transform(X_float)
+
+        if transformed is None:
+            print("WARNING: PCA returned None — fallback")
+            return X_float
+
+        transformed = np.nan_to_num(transformed)
+
+        return transformed.astype(np.float64)
+
     except Exception as e:
-        print(f"Batch Error: {e}")
-        with open('backend_error.log', 'a') as f:
-            f.write(f"Batch Error: {str(e)}\n")
-        return jsonify({'error': str(e)}), 500
+        print(f"PCA Transform Error: {e} — using fallback")
+        return X.astype(np.float64)
+
+
 
 @app.route('/predict/individual', methods=['POST'])
 def predict_individual():
+    with open("verify_execution.txt", "a") as f:
+        f.write(f"Executing predict_individual at {datetime.now()}\n")
+    
     try:
         data = request.json
-        
-        # Convert JSON to DataFrame to reuse preprocessing
-        # We need to map JSON keys to expected Excel columns
-        # Mapping based on typical JSON keys sent from frontend vs Excel columns
-        
-        # Map frontend keys to backend columns
+
+        # Prepare consistent input dictionary
         input_data = {
-            'Age': data.get('age', 20),
+            'Age': data.get('age', 0),
             'CGPA': data.get('cgpa', 0),
             'Number_of_Backlogs': data.get('backlogs', 0),
             'Number_of_Internships': data.get('internships', 0),
@@ -222,79 +193,197 @@ def predict_individual():
             'Technical_Skills_Score': data.get('technical_skills', 1),
             'Number_of_Hackathons': data.get('hackathons', 0),
             'Soft_Skills_Score': data.get('soft_skills', 1),
-            
-            'Gender': data.get('gender', 'Male'),
-            'Branch_Department': data.get('branch', 'CSE'),
-            'Type_of_Internships': data.get('internship_type', 'None'),
-            'Co_curricular_Activities': data.get('cocurricular', 'No'),
-            'Leadership_Roles': data.get('leadership', 'No'),
-            'Entrepreneur_Cell_Member': data.get('entrepreneur_cell', 'No'),
-            'Family_Business_Background': data.get('family_business', 'No')
+
+            'Gender': data.get('gender', 'Unknown'),
+            'Branch_Department': data.get('branch', 'Unknown'),
+            'Type_of_Internships': data.get('internship_type', 'Unknown'),
+            'Co_curricular_Activities': data.get('cocurricular', 'Unknown'),
+            'Leadership_Roles': data.get('leadership', 'Unknown'),
+            'Entrepreneur_Cell_Member': data.get('entrepreneur_cell', 'Unknown'),
+            'Family_Business_Background': data.get('family_business', 'Unknown')
         }
-        
+
+        # Convert into DF
         df_input = pd.DataFrame([input_data])
+
+        # Preprocess - now returns DataFrame with correct columns
+        df_processed = preprocess_features(df_input)
         
-        X = preprocess_features(df_input)
+        # Extract ONLY numerical columns for PCA (first 10 cols)
+        # Extract ONLY numerical columns for PCA (first 10 cols)
+        X_numerical = df_processed[NUMERICAL_COLS].values
         
-        embeddings = get_embeddings(tabnet_model, X)
-        if embeddings is None:
-             return jsonify({'error': 'Failed to generate embeddings'}), 500
-             
-        cluster_id = int(kmeans_model.predict(embeddings)[0])
+        # PCA embeddings (Optional/Unused for prediction if KMeans expects full features)
+        # We still calculate it if needed, but for KMeans we use full X if it expects 17.
+        # Based on error "KMeans expecting 17", we must use the full 17 features.
+        # Use ascontiguousarray to ensure memory layout matches expectation. 
+        # Float64 failed. Float32 succeeded in dummy test. Model likely expects Float32.
+        X_full = np.ascontiguousarray(df_processed.values, dtype=np.float32)
         
-        info = cluster_info.get(cluster_id, {})
-        
-        # Roadmap
-        roadmap = "Gemini API Key missing."
+        try:
+             # Try predicting with full features
+             cluster_id = int(kmeans_model.predict(X_full)[0])
+        except Exception as e:
+             print(f"KMeans Full Feature Error: {e}")
+             # Detailed error for debugging
+             raise ValueError(f"KMeans prediction failed: {str(e)}. Input shape: {X_full.shape}, dtype: {X_full.dtype}")
+
+        print("Predicted cluster:", cluster_id)
+
+        # Cluster info safety check
+        info = {}
+        if cluster_info and isinstance(cluster_info, dict):
+            info = cluster_info.get(cluster_id, {})
+
+        # Generate roadmap
         if GEMINI_API_KEY:
-            roadmap = generate_roadmap(data, info.get('name'), info.get('roles'))
-            
+            roadmap = generate_roadmap(data, info.get('name', ''), info.get('roles'))
+        else:
+            roadmap = "Gemini API Key missing."
+
         return jsonify({
             'cluster_id': cluster_id,
             'profile_name': info.get('name', f'Cluster {cluster_id}'),
             'suggested_roles': info.get('roles', []),
-            'description': info.get('description', ''),
+            'description': info.get('description', ""),
             'roadmap': roadmap
         })
-        
+
+
     except Exception as e:
         print(f"Individual Error: {e}")
-        with open('backend_error.log', 'a') as f:
-            f.write(f"Individual Error: {str(e)}\n")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': f"An error occurred: {str(e)}"}), 500
+
+
+@app.route('/predict/batch', methods=['POST'])
+def predict_batch():
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file part'}), 400
+
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'error': 'No selected file'}), 400
+
+        if file:
+            # Read file
+            if file.filename.endswith('.csv'):
+                df = pd.read_csv(file)
+            elif file.filename.endswith(('.xls', '.xlsx')):
+                df = pd.read_excel(file)
+            else:
+                return jsonify({'error': 'Invalid file format. Use CSV or Excel'}), 400
+
+            # Preprocess
+            df_processed = preprocess_features(df.copy())
+            
+            # Predict
+            # Apply same fix: Use ascontiguousarray with float32 for KMeans
+            X_full = np.ascontiguousarray(df_processed.values, dtype=np.float32)
+            
+            clusters = kmeans_model.predict(X_full)
+            
+            # Enrich DataFrame
+            df['Cluster_ID'] = clusters
+            df['Profile_Name'] = [
+                cluster_info.get(int(c), {}).get('name', f'Cluster {c}') 
+                for c in clusters
+            ]
+            df['Suggested_Roles'] = [
+                ", ".join(cluster_info.get(int(c), {}).get('roles', [])) 
+                for c in clusters
+            ]
+            
+            # Calculate Distribution
+            distribution = df['Profile_Name'].value_counts().to_dict()
+
+            # Convert back to CSV/Excel
+            output = BytesIO()
+            df.to_csv(output, index=False)
+            output.seek(0)
+            
+            # Encode to base64
+            file_base64 = base64.b64encode(output.getvalue()).decode('utf-8')
+            
+            return jsonify({
+                'success': True,
+                'file_base64': file_base64,
+                'filename': 'career_predictions.csv',
+                'distribution': distribution
+            })
+
+    except Exception as e:
+        print(f"Batch Error: {e}")
+        return jsonify({'error': f"Batch processing failed: {str(e)}"}), 500
+
+
 
 def generate_roadmap(data, profile, roles):
     try:
-        model = genai.GenerativeModel('models/gemma-3-1b-it')
+        model = genai.GenerativeModel(GEMINI_MODEL_NAME)
+
         prompt = f"""
-        Create a 6-month career roadmap for a student aiming for: {profile}
-        Roles: {roles}
-        
-        Current Stats:
+        Create a career roadmap for student aiming for: {profile}
+        Target roles: {roles}
+
+        Student details:
         CGPA: {data.get('cgpa')}
-        Skills: {data.get('technical_skills')}/5
-        
-        Format as Markdown.
+        Projects: {data.get('projects')}
+
+        Provide a 6 month plan.
         """
-        return model.generate_content(prompt).text
+
+        response = model.generate_content(prompt)
+        return response.text
+
     except:
         return "Could not generate roadmap."
+
 
 @app.route('/chat', methods=['POST'])
 def chat():
     try:
         data = request.json
-        msg = data.get('message')
+        user_message = data.get('message', '')
+        history = data.get('history', [])
         context = data.get('context', {})
+
+        if not user_message:
+            return jsonify({'error': 'Message is required'}), 400
+
+        # Construct System Prompt with Context
+        system_prompt = f"""
+        You are a helpful Career Counselor AI.
+        Context about the student:
+        - Profile: {context.get('profile_name', 'Student')}
+        - Suggested Roles: {context.get('roles', 'N/A')}
+        - Technical Skill Score: {context.get('technical_score', 'N/A')}/5
         
-        model = genai.GenerativeModel('models/gemma-3-1b-it')
-        prompt = f"""
-        Context: Student Profile - {context.get('profile_name')}
-        User: {msg}
+        Answer the student's question based on this profile. Be encouraging and practical.
         """
-        return jsonify({'response': model.generate_content(prompt).text})
+
+        # Initialize Chat
+        model = genai.GenerativeModel(GEMINI_MODEL_NAME)
+        chat_session = model.start_chat(history=[])
+        
+        # Add limited history context if needed, but for simplicity we send a composed prompt
+        # or just the latest message with system instruction.
+        # Gemini API supports system_instruction on model creation in newer versions, 
+        # but here we'll just prepend it to the message or assume stateless content generation for simplicity 
+        # due to unknown library version features.
+        
+        full_prompt = f"{system_prompt}\n\nStudent: {user_message}"
+        
+        response = model.generate_content(full_prompt)
+        
+        return jsonify({
+            'response': response.text
+        })
+
     except Exception as e:
+        print(f"Chat Error: {e}")
         return jsonify({'error': str(e)}), 500
 
+
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=False, port=5001)

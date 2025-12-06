@@ -4,7 +4,7 @@ import { FaCalculator, FaGraduationCap, FaBriefcase, FaBook, FaCertificate } fro
 import { motion } from 'framer-motion';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts';
 
-const API_URL = 'http://localhost:5000';
+const API_URL = 'http://localhost:5001';
 
 const APICalculator = () => {
   const [formData, setFormData] = useState({
