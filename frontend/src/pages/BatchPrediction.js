@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import axios from 'axios';
 import { FaUpload, FaDownload, FaFileExcel, FaCheck, FaSpinner, FaExternalLinkAlt, FaWpforms, FaChartPie } from 'react-icons/fa';
 import { motion } from 'framer-motion';
-import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 
 const API_URL = 'http://localhost:5001';
 
@@ -12,9 +12,52 @@ const BatchPrediction = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [distribution, setDistribution] = useState(null);
-
   // Updated Google Form link
   const GOOGLE_FORM_LINK = 'https://forms.gle/waq4HvbME4HVH1Ew7';
+
+  // Comparison State
+  const [compLoading, setCompLoading] = useState(false);
+  const [predFile, setPredFile] = useState(null);
+  const [truthFile, setTruthFile] = useState(null);
+  const [compResult, setCompResult] = useState(null);
+  const [compError, setCompError] = useState('');
+
+  const handleCompSubmit = async (e) => {
+    e.preventDefault();
+    if (!predFile || !truthFile) {
+      setCompError('Please upload both files');
+      return;
+    }
+
+    setCompLoading(true);
+    setCompError('');
+    setCompResult(null);
+
+    const formData = new FormData();
+    formData.append('predicted_file', predFile);
+    formData.append('truth_file', truthFile);
+
+    try {
+      const response = await axios.post(`${API_URL}/predict/batch-compare`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      if (response.data.success) {
+        setCompResult(response.data);
+      }
+    } catch (err) {
+      setCompError(err.response?.data?.error || 'Comparison failed');
+      // Auto-clear error after 5s
+      setTimeout(() => setCompError(''), 5000);
+    } finally {
+      setCompLoading(false);
+    }
+  };
+
+  // Prepare data for Stacked Bar Chart
+  const getChartData = () => {
+    if (!compResult) return [];
+    return compResult.matrix_data;
+  };
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
@@ -279,8 +322,263 @@ const BatchPrediction = () => {
             <p className="text-sm text-gray-600">Includes probabilities for all career paths</p>
           </div>
         </div>
+        {/* Multi-Year Analysis Section */}
+        <div className="mt-12">
+          <h2 className="text-3xl font-bold mb-6 gradient-text text-center border-t pt-8">Multi-Year Cohort Analysis</h2>
+
+          <div className="glass-card p-8">
+            <h3 className="text-xl font-bold mb-4 text-gray-800">Analyze Trends Across 4 Years</h3>
+            <p className="text-gray-600 mb-6">Upload student data files for up to 4 different years to compare career path trends.</p>
+
+            <MultiYearAnalysis />
+          </div>
+        </div>
+
+        {/* Comparison Section */}
+        <div className="mt-12">
+          <h2 className="text-3xl font-bold mb-6 gradient-text text-center border-t pt-8">Compare Results</h2>
+
+          <div className="glass-card p-8">
+            <h3 className="text-xl font-bold mb-4 text-gray-800">Upload Files for Comparison</h3>
+            <p className="text-gray-600 mb-6">Compare your predicted results against the ground truth (actual results) to measure accuracy.</p>
+
+            <form onSubmit={handleCompSubmit} className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Predicted File Input */}
+                <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-primary-500 transition-colors">
+                  <p className="font-semibold text-gray-700 mb-2">1. Predicted File</p>
+                  <label className="cursor-pointer">
+                    <input type="file" onChange={(e) => setPredFile(e.target.files[0])} accept=".xlsx,.xls,.csv" className="hidden" />
+                    <span className="btn-secondary inline-block px-4 py-2 border rounded hover:bg-gray-50">
+                      {predFile ? predFile.name : 'Upload Prediction'}
+                    </span>
+                  </label>
+                </div>
+
+                {/* Truth File Input */}
+                <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-500 transition-colors">
+                  <p className="font-semibold text-gray-700 mb-2">2. Truth File (Actual)</p>
+                  <label className="cursor-pointer">
+                    <input type="file" onChange={(e) => setTruthFile(e.target.files[0])} accept=".xlsx,.xls,.csv" className="hidden" />
+                    <span className="btn-secondary inline-block px-4 py-2 border rounded hover:bg-gray-50">
+                      {truthFile ? truthFile.name : 'Upload Truth File'}
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              {compError && (
+                <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded text-red-700">
+                  {compError}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={!predFile || !truthFile || compLoading}
+                className={`w-full py-3 rounded-lg font-semibold text-white transition-all ${!predFile || !truthFile || compLoading
+                  ? 'bg-gray-400 cursor-not-allowed'
+                  : 'bg-green-600 hover:bg-green-700 shadow-lg'
+                  }`}
+              >
+                {compLoading ? 'Comparing...' : 'Compare & Visualize Accuracy'}
+              </button>
+            </form>
+          </div>
+
+          {/* Comparison Results */}
+          {compResult && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mt-8 space-y-8"
+            >
+              {/* Stats Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="glass-card p-6 text-center border-b-4 border-green-500">
+                  <h3 className="text-gray-500 font-medium">Accuracy</h3>
+                  <div className="text-4xl font-bold text-gray-800">{compResult.accuracy}%</div>
+                </div>
+                <div className="glass-card p-6 text-center border-b-4 border-blue-500">
+                  <h3 className="text-gray-500 font-medium">Matches</h3>
+                  <div className="text-4xl font-bold text-gray-800">{compResult.correct} <span className="text-lg text-gray-400">/ {compResult.total}</span></div>
+                </div>
+                <div className="glass-card p-6 text-center border-b-4 border-purple-500">
+                  <h3 className="text-gray-500 font-medium">Target Column</h3>
+                  <div className="text-lg font-bold text-gray-800 truncate" title={compResult.truth_column}>{compResult.truth_column}</div>
+                </div>
+              </div>
+
+              {/* Stacked Bar Chart */}
+              <div className="glass-card p-8">
+                <h3 className="text-2xl font-bold mb-2 text-gray-800 text-center">Prediction vs Actual Distribution</h3>
+                <p className="text-center text-gray-600 mb-6">
+                  Comparison of what the model predicted (colors) vs what the student actually became (X-axis categories).
+                </p>
+                <div className="h-[500px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={getChartData()}
+                      margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis
+                        dataKey="name"
+                        interval={0}
+                        tick={<CustomTick />}
+                        height={80}
+                        label={{ value: 'Actual Profile (Ground Truth)', position: 'insideBottom', offset: -10 }}
+                      />
+                      <YAxis label={{ value: 'Student Count', angle: -90, position: 'insideLeft' }} />
+                      <Tooltip
+                        formatter={(value, name) => [value, `Predicted: ${name}`]}
+                        labelFormatter={(label) => `Actual: ${label}`}
+                        contentStyle={{ backgroundColor: 'rgba(255, 255, 255, 0.95)', borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}
+                      />
+                      <Legend verticalAlign="top" />
+                      {/* Dynamically create Bars for each predicted class. We use the keys of the first data item excluding 'name' and 'total'. */}
+                      {getChartData().length > 0 && Object.keys(getChartData()[0])
+                        .filter(key => key !== 'name' && key !== 'total')
+                        .map((key, index) => (
+                          <Bar key={key} dataKey={key} stackId="a" fill={COLORS[index % COLORS.length]} name={key} />
+                        ))
+                      }
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="mt-6 bg-blue-50 p-4 rounded-lg border border-blue-100">
+                  <h4 className="font-bold text-blue-800 mb-2">How to read this chart:</h4>
+                  <ul className="list-disc list-inside text-sm text-blue-700 space-y-1">
+                    <li><strong>X-Axis (Bottom)</strong>: The ACTUAL career path the student took.</li>
+                    <li><strong>Colors (Bars)</strong>: What our AI PREDICTED for them.</li>
+                    <li><strong>Perfect Accuracy</strong>: If a bar is a single solid color matching its label (e.g., "Data Scientist" actual is all "Data Scientist" predicted).</li>
+                    <li><strong>Confusion</strong>: If a bar has multiple colors, it means the model was confused (e.g., Some "Data Scientists" were predicted as "Developers").</li>
+                  </ul>
+                </div>
+              </div>
+
+            </motion.div>
+          )}
+
+
+        </div>
+
       </motion.div>
     </div>
+  );
+};
+
+const MultiYearAnalysis = () => {
+  const [files, setFiles] = useState({ year1: null, year2: null, year3: null, year4: null });
+  const [loading, setLoading] = useState(false);
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+
+  const handleFileChange = (year, file) => {
+    setFiles(prev => ({ ...prev, [year]: file }));
+  };
+
+  const handleSubmit = async () => {
+    const formData = new FormData();
+    let hasFile = false;
+    Object.keys(files).forEach(key => {
+      if (files[key]) {
+        formData.append(key, files[key]);
+        hasFile = true;
+      }
+    });
+
+    if (!hasFile) {
+      setError("Please upload at least one file.");
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      const response = await axios.post(`${API_URL}/predict/multi-year`, formData);
+      if (response.data.success) {
+        setData(response.data.chart_data);
+      }
+    } catch (err) {
+      setError(err.response?.data?.error || "Analysis failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const COLORS_YEAR = ['#8884d8', '#82ca9d', '#ffc658', '#ff7300'];
+
+  return (
+    <div className="space-y-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        {['year1', 'year2', 'year3', 'year4'].map((year, idx) => (
+          <div key={year} className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center hover:border-blue-500 transition-colors">
+            <p className="font-bold text-gray-700 mb-2">Year {idx + 1}</p>
+            <label className="cursor-pointer block">
+              <input type="file" onChange={(e) => handleFileChange(year, e.target.files[0])} accept=".xlsx,.csv" className="hidden" />
+              <span className="text-xs btn-secondary inline-block px-3 py-2 border rounded hover:bg-gray-50 truncate max-w-full">
+                {files[year] ? files[year].name : `Upload File`}
+              </span>
+            </label>
+          </div>
+        ))}
+      </div>
+
+      {error && <p className="text-red-500 font-medium">{error}</p>}
+
+      <button
+        onClick={handleSubmit}
+        disabled={loading}
+        className="w-full py-3 bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-700 transition shadow-lg"
+      >
+        {loading ? <FaSpinner className="animate-spin inline mr-2" /> : null}
+        {loading ? 'Analyzing...' : 'Generate Multi-Year Report'}
+      </button>
+
+
+      {data && (
+        <div className="h-[500px] w-full mt-8">
+          <h4 className="text-center font-bold text-lg mb-4 text-gray-700">Career Path Trends by Year</h4>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={data} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis
+                dataKey="name"
+                interval={0}
+                tick={<CustomTick />}
+                height={80}
+              />
+              <YAxis label={{ value: 'Students', angle: -90, position: 'insideLeft' }} />
+              <Tooltip />
+              <Legend />
+              <Bar dataKey="year1" name="Year 1" fill={COLORS_YEAR[0]} />
+              <Bar dataKey="year2" name="Year 2" fill={COLORS_YEAR[1]} />
+              <Bar dataKey="year3" name="Year 3" fill={COLORS_YEAR[2]} />
+              <Bar dataKey="year4" name="Year 4" fill={COLORS_YEAR[3]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const CustomTick = ({ x, y, payload }) => {
+  const words = payload.value.split(' ');
+  const lineHeight = 15;
+
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <text x={0} y={0} dy={25} textAnchor="middle" fill="#666" fontSize={12}>
+        {words.map((word, index) => (
+          <tspan x={0} dy={index === 0 ? 0 : lineHeight} key={index}>
+            {word}
+          </tspan>
+        ))}
+      </text>
+    </g>
   );
 };
 

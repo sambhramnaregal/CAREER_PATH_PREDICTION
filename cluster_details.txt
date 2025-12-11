@@ -1,0 +1,23 @@
+KMeans n_clusters: 5
+Cluster Info Content:
+{0: {'description': 'Strong coding ability, technical inclination and '
+                    'analytical thinking.',
+     'name': 'Technical Innovators',
+     'roles': ['Software Engineer', 'Backend Developer', 'AI Engineer']},
+ 1: {'description': 'Good academic mindset, research interest and analytical '
+                    'thinking.',
+     'name': 'Research & Data Learners',
+     'roles': ['Data Analyst', 'Research Intern']},
+ 2: {'description': 'Growing skillset, quick learning mindset, consistent '
+                    'improvement focus.',
+     'name': 'Career Growth Oriented Learners',
+     'roles': ['Associate Engineer', 'Junior Developer']},
+ 3: {'description': 'Focuses on specialized technical infrastructure and '
+                    'security.',
+     'name': 'Technical Specialist',
+     'roles': ['DevOps Engineer',
+               'Cloud Architect',
+               'Cybersecurity Specialist']},
+ 4: {'description': 'Driven by innovation and deep technical research.',
+     'name': 'Research Innovator',
+     'roles': ['R&D Scientist', 'AI Researcher', 'Data Scientist']}}

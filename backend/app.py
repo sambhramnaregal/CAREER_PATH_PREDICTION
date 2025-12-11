@@ -1,3 +1,4 @@
+print("Starting app.py...")
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import pandas as pd
@@ -10,6 +11,7 @@ import google.generativeai as genai
 import json
 from dotenv import load_dotenv
 import base64
+import re
 
 # Load .env from parent directory
 dotenv_path = os.path.join(os.path.dirname(__file__), '..', '.env')
@@ -96,7 +98,8 @@ def health_check():
             'kmeans': kmeans_model is not None,
             'pca': pca_model is not None,
             'scaler': scaler is not None
-        }
+        },
+        'version': 'multi-year-v1'
     })
 
 
@@ -131,15 +134,43 @@ def preprocess_features(df):
     df[NUMERICAL_COLS] = df[NUMERICAL_COLS].apply(pd.to_numeric, errors='coerce').fillna(0)
 
     # 🔥 Now scale safely (scaler expects 2D numeric array)
-    df[NUMERICAL_COLS] = scaler.transform(df[NUMERICAL_COLS].values)
+    try:
+        df[NUMERICAL_COLS] = scaler.transform(df[NUMERICAL_COLS].values)
+    except Exception as e:
+        # Fallback if scaler fails (e.g. wrong shape), though it shouldn't if cols match
+        print(f"Scaler Error: {e}")
+        pass
 
-    # Construct final array
+    # Construct final array (ensure correct column order)
     final_df = df[NUMERICAL_COLS + CATEGORICAL_COLS]
-
-    # Final sanity check
     final_df = final_df.fillna(0)
 
     return final_df
+
+
+def process_student_dataframe(df):
+    """Core logic to process a dataframe and add predictions"""
+    # Preprocess
+    df_processed = preprocess_features(df.copy())
+    
+    # Predict
+    # Apply same fix: Use ascontiguousarray with float32 for KMeans
+    X_full = np.ascontiguousarray(df_processed.values, dtype=np.float32)
+    
+    clusters = kmeans_model.predict(X_full)
+    
+    # Enrich DataFrame
+    df['Cluster_ID'] = clusters
+    df['Profile_Name'] = [
+        cluster_info.get(int(c), {}).get('name', f'Cluster {c}') 
+        for c in clusters
+    ]
+    df['Suggested_Roles'] = [
+        ", ".join(cluster_info.get(int(c), {}).get('roles', [])) 
+        for c in clusters
+    ]
+    
+    return df, clusters
 
 
 def get_embeddings(X):
@@ -270,29 +301,12 @@ def predict_batch():
             if file.filename.endswith('.csv'):
                 df = pd.read_csv(file)
             elif file.filename.endswith(('.xls', '.xlsx')):
-                df = pd.read_excel(file)
+                df = pd.read_excel(file, engine='openpyxl')
             else:
                 return jsonify({'error': 'Invalid file format. Use CSV or Excel'}), 400
 
-            # Preprocess
-            df_processed = preprocess_features(df.copy())
-            
-            # Predict
-            # Apply same fix: Use ascontiguousarray with float32 for KMeans
-            X_full = np.ascontiguousarray(df_processed.values, dtype=np.float32)
-            
-            clusters = kmeans_model.predict(X_full)
-            
-            # Enrich DataFrame
-            df['Cluster_ID'] = clusters
-            df['Profile_Name'] = [
-                cluster_info.get(int(c), {}).get('name', f'Cluster {c}') 
-                for c in clusters
-            ]
-            df['Suggested_Roles'] = [
-                ", ".join(cluster_info.get(int(c), {}).get('roles', [])) 
-                for c in clusters
-            ]
+            # Process
+            df, clusters = process_student_dataframe(df)
             
             # Calculate Distribution
             distribution = df['Profile_Name'].value_counts().to_dict()
@@ -315,6 +329,62 @@ def predict_batch():
     except Exception as e:
         print(f"Batch Error: {e}")
         return jsonify({'error': f"Batch processing failed: {str(e)}"}), 500
+
+
+@app.route('/predict/multi-year', methods=['POST'])
+def predict_multi_year():
+    try:
+        years = ['year1', 'year2', 'year3', 'year4']
+        results = {}
+        combined_stats = {} # Profile -> {year1: count, year2: count...}
+        
+        # We need at least one file
+        if not any(y in request.files for y in years):
+             return jsonify({'error': 'No files uploaded. Please upload at least one year file.'}), 400
+
+        # Collect all unique profiles encountered
+        all_profiles = set()
+
+        for year in years:
+            if year in request.files:
+                file = request.files[year]
+                if file.filename:
+                     # Read
+                    if file.filename.endswith('.csv'):
+                        df = pd.read_csv(file)
+                    elif file.filename.endswith('.xlsx'):
+                        df = pd.read_excel(file, engine='openpyxl')
+                    else:
+                        df = pd.read_excel(file)
+                    
+                    # Process
+                    df, _ = process_student_dataframe(df)
+                    
+                    # Get Count
+                    counts = df['Profile_Name'].value_counts().to_dict()
+                    results[year] = counts
+                    
+                    # Add to set
+                    all_profiles.update(counts.keys())
+        
+        # Prepare Chart Data
+        # format: [ { name: "Data Scientist", year1: 10, year2: 5 ... }, ... ]
+        chart_data = []
+        for profile in sorted(list(all_profiles)):
+            row = {'name': profile}
+            for year in years: # Ensure all years are present even if 0
+                row[year] = results.get(year, {}).get(profile, 0)
+            chart_data.append(row)
+
+        return jsonify({
+            'success': True,
+            'results': results, # raw counts per year
+            'chart_data': chart_data
+        })
+
+    except Exception as e:
+        print(f"Multi-Year Error: {e}")
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/calculate/api', methods=['POST'])
@@ -451,5 +521,200 @@ def chat():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/predict/batch-compare', methods=['POST'])
+def predict_batch_compare():
+    try:
+        if 'predicted_file' not in request.files or 'truth_file' not in request.files:
+            return jsonify({'error': 'Both predicted_file and truth_file are required'}), 400
+
+        pred_file = request.files['predicted_file']
+        truth_file = request.files['truth_file']
+
+        if pred_file.filename == '' or truth_file.filename == '':
+            return jsonify({'error': 'No selected file'}), 400
+
+        # Read files
+        def read_df(f):
+            if f.filename.endswith('.csv'):
+                return pd.read_csv(f)
+            elif f.filename.endswith('.xlsx'):
+                return pd.read_excel(f, engine='openpyxl')
+            else:
+                return pd.read_excel(f)
+
+        df_pred = read_df(pred_file)
+        df_truth = read_df(truth_file)
+
+        # Remove duplicate columns if any
+        df_pred = df_pred.loc[:, ~df_pred.columns.duplicated()]
+        df_truth = df_truth.loc[:, ~df_truth.columns.duplicated()]
+
+        # 1. Align Data
+        # Try to merge on USN if available (case insensitive check)
+        pred_cols = {c.lower(): c for c in df_pred.columns}
+        truth_cols = {c.lower(): c for c in df_truth.columns}
+        
+        usn_col_pred = pred_cols.get('usn')
+        usn_col_truth = truth_cols.get('usn')
+
+        if usn_col_pred and usn_col_truth:
+            # Merge on USN
+            # Ensure USNs are strings for reliable merging
+            df_pred[usn_col_pred] = df_pred[usn_col_pred].astype(str).str.strip().str.lower()
+            df_truth[usn_col_truth] = df_truth[usn_col_truth].astype(str).str.strip().str.lower()
+            
+            merged = pd.merge(df_pred, df_truth, left_on=usn_col_pred, right_on=usn_col_truth, suffixes=('_pred', '_truth'))
+            print(f"Merged {len(merged)} records on USN")
+        else:
+            # Fallback to index
+            print("USN column missing. Falling back to row index alignment.")
+            min_len = min(len(df_pred), len(df_truth))
+            
+            # Ensure index alignment
+            d1 = df_pred.iloc[:min_len].reset_index(drop=True)
+            d2 = df_truth.iloc[:min_len].reset_index(drop=True)
+            
+            # Add suffix to truth columns to avoid duplicates
+            d2 = d2.add_suffix('_truth')
+            
+            merged = pd.concat([d1, d2], axis=1)
+            # Add suffixes concept manually if needed, but concat(axis=1) keeps original names unless duplicates
+            # If duplicates exist, pandas adds suffixes but we need to identify them
+            
+        # 2. Identify Target Columns (UPDATED: Prioritize Profile_Name)
+        
+        # Helper to find "Profile_Name" case-insensitively
+        def find_profile_col(df):
+            for c in df.columns:
+                if c.lower() == 'profile_name':
+                    return c
+            return None
+
+        pred_profile_col = find_profile_col(df_pred)
+        truth_profile_col = find_profile_col(df_truth)
+
+        # Fallback Logic if not found
+        if not pred_profile_col:
+            possible_pred_names = ['Predicted_Profile', 'Cluster_Name', 'Predicted Role']
+            for col in df_pred.columns:
+                 if any(p in col for p in possible_pred_names):
+                     pred_profile_col = col
+                     break
+        
+        if not truth_profile_col:
+             possible_truth_keywords = ['status', 'career', 'actual', 'verified', 'role', 'domain']
+             for col in df_truth.columns:
+                 if any(k in col.lower() for k in possible_truth_keywords):
+                     truth_profile_col = col
+                     break
+             if not truth_profile_col:
+                 truth_profile_col = df_truth.columns[-1] # Absolute fallback
+
+        if not pred_profile_col or not truth_profile_col:
+              return jsonify({'error': f"Could not identify columns. Found Pred: {pred_profile_col}, Truth: {truth_profile_col}"}), 400
+
+        print(f"Pre-Merge Columns: Pred='{pred_profile_col}', Truth='{truth_profile_col}'")
+        
+        # Resolve Suffixes
+        # If columns have same name, pandas adds suffixes
+        if pred_profile_col == truth_profile_col:
+            pred_target = f"{pred_profile_col}_pred"
+            truth_target = f"{truth_profile_col}_truth"
+        else:
+            # If names are different, they might persist or collide with others?
+            # Safest checks:
+            pred_target = pred_profile_col
+            truth_target = truth_profile_col
+             
+            # If they collide with other cols, we trust pandas suffixes logic, but here we manually passed suffixes
+            # If pred_profile_col was 'Name' and truth had 'Name', they become Name_pred/Name_truth.
+            # We need to check if they exist in merged.
+            
+            # Since we manually handle collisions for specific targets above, let's just dynamic check
+            pass
+
+        # ... merge happened before this block, wait. Correct logic: identify -> merge -> resolve.
+
+
+        pass
+        if pred_target not in merged.columns:
+            # Maybe suffixed?
+            if f"{pred_target}_pred" in merged.columns:
+                pred_target = f"{pred_target}_pred"
+        
+        if truth_target not in merged.columns:
+            if f"{truth_target}_truth" in merged.columns:
+                truth_target = f"{truth_target}_truth"
+                
+        # Double check existence
+        if pred_target not in merged.columns or truth_target not in merged.columns:
+             return jsonify({'error': f"Column resolution failed after merge. Targets: {pred_target}, {truth_target}"}), 400
+
+        if not pred_target or not truth_target:
+             return jsonify({'error': f"Could not identify columns. Found Pred: {pred_target}, Truth: {truth_target}"}), 400
+
+        print(f"Comparing Pred: {pred_target} vs Truth: {truth_target}")
+
+        # 3. Calculate Accuracy
+        def clean_label(val):
+            val = str(val).lower().strip()
+            # Remove "cluster X" or "profile X" prefix (e.g. "Cluster 0: Technical")
+            val = re.sub(r'^(cluster|profile)\s*\d+\s*[:\-]?\s*', '', val)
+            # Remove extra whitespace
+            val = re.sub(r'\s+', ' ', val)
+            return val.strip()
+
+        y_pred = merged[pred_target].apply(clean_label)
+        y_true = merged[truth_target].apply(clean_label)
+        
+        # Clean up labels (remove "cluster X" prefixes if they exist in one but not other? 
+        # For now assume mostly direct string match)
+        
+        total = len(merged)
+        matches = (y_pred == y_true)
+        correct_count = matches.sum()
+        accuracy = (correct_count / total) * 100 if total > 0 else 0
+        
+        # 4. Generate Confusion Matrix Data
+        # We need unique labels from both
+        labels = sorted(list(set(y_pred.unique()) | set(y_true.unique())))
+        
+        cm_data = []
+        for actual in labels:
+            row = {'name': actual} # The actual label
+            # Get subset where truth is this label
+            subset = merged[y_true == actual]
+            row['total'] = len(subset)
+            
+            # Count predictions for this actual label
+            # e.g. { "Data Scientist": 10, "Web Dev": 2 }
+            pred_counts = subset[pred_target].astype(str).str.lower().str.strip().value_counts()
+            
+            for predicted_label, count in pred_counts.items():
+                row[predicted_label] = int(count)
+                
+            cm_data.append(row)
+
+        return jsonify({
+            'success': True,
+            'accuracy': round(accuracy, 2),
+            'correct': int(correct_count),
+            'total': int(total),
+            'pred_column': pred_target,
+            'truth_column': truth_target,
+            'matrix_data': cm_data,
+            'labels': labels
+        })
+
+    except Exception as e:
+        print(f"Compare Error: {e}")
+        return jsonify({'error': f"Comparison failed: {str(e)}"}), 500
+
+
 if __name__ == '__main__':
     app.run(debug=False, port=5001)
+#cd frontend
+#npm start
+
+#cd backend
+#python app.py
