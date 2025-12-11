@@ -716,5 +716,7 @@ if __name__ == '__main__':
 #cd frontend
 #npm start
 
+
 #cd backend
+#.\venv\Scripts\Activate.ps1
 #python app.py
