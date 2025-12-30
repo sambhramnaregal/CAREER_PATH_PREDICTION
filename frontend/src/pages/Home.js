@@ -122,27 +122,27 @@ const Home = () => {
           {[
             {
               title: "Technical Innovators",
-              desc: "Strong coding ability, technical inclination and analytical thinking.",
+              desc: "Core software developers and architects who excel in transforming abstract ideas into functional systems. They stand out by their reliability in coding complex algorithms and building scalable products, focusing on application utility rather than just theory.",
               color: "bg-gradient-to-br from-blue-50 to-blue-100 text-blue-800"
             },
             {
               title: "Research & Data Learners",
-              desc: "Good academic mindset, research interest and analytical thinking.",
+              desc: "Future data scientists and analysts driven by curiosity and patterns. Their uniqueness lies in a strong theoretical foundation and mathematical rigor, prioritizing accuracy and deep understanding of data over immediate software deployment.",
               color: "bg-gradient-to-br from-green-50 to-green-100 text-green-800"
             },
             {
               title: "Career Growth Learners",
-              desc: "Growing skillset, quick learning mindset, consistent improvement focus.",
+              desc: "High-potential talent defined by their adaptability and rapid learning velocity. Unlike specialists with static skills, they thrive in changing environments, constantly upskilling and bridging gaps between different technical domains.",
               color: "bg-gradient-to-br from-purple-50 to-purple-100 text-purple-800"
             },
             {
               title: "Technical Specialist",
-              desc: "Focuses on specialized technical infrastructure and security.",
+              desc: "Experts in critical infrastructure, security, and utilization. They differ by focusing on the 'how' and 'where' applications run—ensuring robustness, security, and uptime—rather than just the feature development itself.",
               color: "bg-gradient-to-br from-orange-50 to-orange-100 text-orange-800"
             },
             {
               title: "Research Innovator",
-              desc: "Driven by innovation and deep technical research.",
+              desc: "The bridge between cutting-edge theory and practical application (e.g., R&D, AI Engineers). They possess the rare ability to not only understand complex research but also operationalize it into tangible innovations, unlike pure researchers or pure devs.",
               color: "bg-gradient-to-br from-pink-50 to-pink-100 text-pink-800"
             }
           ].map((path, index) => (
